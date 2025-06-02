@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 use Lumo::auto_display_enum;
 
@@ -9,7 +10,7 @@ pub struct Token<'a> {
     lineno: u32,
     columnno: u32,
 
-    token_kind: TokenKind<'a>,
+    kind: TokenKind<'a>,
 }
 
 impl<'a> Token<'a> {
@@ -18,7 +19,7 @@ impl<'a> Token<'a> {
         lineno: u32,
         columnno: u32,
         line_content: Option<&'a str>,
-        token_kind: TokenKind<'a>,
+        kind: TokenKind<'a>,
     ) -> Self {
         Token {
             file,
@@ -27,7 +28,7 @@ impl<'a> Token<'a> {
             lineno,
             columnno,
 
-            token_kind,
+            kind,
         }
     }
 
@@ -47,17 +48,34 @@ impl<'a> Token<'a> {
         self.columnno
     }
 
-    pub fn token_kind(&self) -> &TokenKind<'a> {
-        &self.token_kind
+    pub fn kind(&self) -> &TokenKind<'a> {
+        &self.kind
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        matches!(self.kind, TokenKind::Unknown)
+    }
+
+    pub fn is_eof(&self) -> bool {
+        matches!(self.kind, TokenKind::Eof)
+    }
+
+    pub fn is_identifier(&self) -> bool {
+        matches!(self.kind, TokenKind::Identifier { .. })
+    }
+
+    pub fn is_literal(&self) -> bool {
+        matches!(self.kind, TokenKind::Literal { .. })
     }
 }
 
 #[allow(dead_code)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TokenKind<'a> {
     Identifier { name: &'a str, constant: bool },
-    Keyword { kind: KeywordKind },
-    Literal { value: &'a str },
     Operator { kind: OperatorKind },
+    Keyword { kind: KeywordKind },
+    Literal { value: Cow<'a, str> },
     Unknown,
     Eof,
 }
@@ -76,6 +94,8 @@ auto_display_enum! {
         MultiplyAssign => "*=",
         Divide => "/",
         DivideAssign => "/=",
+        Modulo => "%",
+        ModuloAssign => "%=",
         Increment => "++",
         Decrement => "--",
 
@@ -106,28 +126,60 @@ auto_display_enum! {
         BitAndAssign => "&=",
         BitNot => "~",
         BitNotAssign => "~=",
+
+        Error => "\0"
     }
 }
 
 // KeywordKind
 auto_display_enum! {
-#[derive(Debug)]
-#[allow(dead_code)]
-pub enum KeywordKind {
-    True => "true",
-    False => "false",
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    #[allow(dead_code)]
+    pub enum KeywordKind {
+        True => "true",
+        False => "false",
 
-    If => "if",
-    Else => "else",
+        If => "if",
+        Else => "else",
 
-    Break => "break",
-    Return => "return",
+        Break => "break",
+        Return => "return",
 
-    Match => "match",
-    Function => "function",
+        Match => "match",
+        Function => "function",
 
-    Set => "set"
+        Set => "set"
+    }
 }
+
+// Equality between a Token and OperatorKind
+impl PartialEq<OperatorKind> for Token<'_> {
+    fn eq(&self, other: &OperatorKind) -> bool {
+        matches!(self.kind,
+            TokenKind::Operator { kind } if kind == *other
+        )
+    }
+}
+
+impl PartialEq<Token<'_>> for OperatorKind {
+    fn eq(&self, other: &Token) -> bool {
+        other == self
+    }
+}
+
+// Equality between a Token and KeywordKind
+impl PartialEq<KeywordKind> for Token<'_> {
+    fn eq(&self, other: &KeywordKind) -> bool {
+        matches!(self.kind,
+            TokenKind::Keyword { kind } if kind == *other
+        )
+    }
+}
+
+impl PartialEq<Token<'_>> for KeywordKind {
+    fn eq(&self, other: &Token) -> bool {
+        other == self
+    }
 }
 
 impl<'a> Display for Token<'a> {
@@ -135,35 +187,39 @@ impl<'a> Display for Token<'a> {
         let path = format!("({} @ {}:{})", self.file, self.lineno, self.columnno);
 
         use TokenKind::*;
-        match &self.token_kind {
+        match &self.kind {
             Identifier { name, constant, .. } => {
                 write!(
                     f,
                     "{} {} {}",
-                    if *constant { "Constant" } else { "Identifier" },
+                    if *constant {
+                        "[Constant]"
+                    } else {
+                        "[Identifier]"
+                    },
                     name,
                     path
                 )
             }
 
             Keyword { kind } => {
-                write!(f, "Keyword {} {}", kind, path)
+                write!(f, "[Keyword] {} {}", kind, path)
             }
 
             Literal { value } => {
-                write!(f, "Literal {} {}", value, path)
+                write!(f, "[Literal] {} {}", value, path)
             }
 
             Operator { kind } => {
-                write!(f, "Operator {} {}", kind, path)
+                write!(f, "[Operator] {} {}", kind, path)
             }
 
             Unknown => {
-                write!(f, "Unknown")
+                write!(f, "[Unknown]")
             }
 
             Eof => {
-                write!(f, "EOF")
+                write!(f, "[EOF]")
             }
         }
     }
