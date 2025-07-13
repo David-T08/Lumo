@@ -1,55 +1,67 @@
+use ordered_float::OrderedFloat;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
-use Lumo::auto_display_enum;
+
+pub mod macros;
+
+pub struct Span {
+    pub start: usize, // Inclusive byte offset in source
+    pub end: usize,   // Inclusive end byte offset
+
+    pub line: u32, // Start line
+    pub col: u32,  // Start column
+}
+
+impl Display for Span {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.line, self.col)
+    }
+}
 
 #[allow(dead_code)]
 pub struct Token<'a> {
     file: &'a str,
-    line_content: Option<&'a str>,
-
-    lineno: u32,
-    columnno: u32,
+    span: Span,
 
     kind: TokenKind<'a>,
 }
 
+#[allow(dead_code)]
 impl<'a> Token<'a> {
-    pub fn new(
-        file: &'a str,
-        lineno: u32,
-        columnno: u32,
-        line_content: Option<&'a str>,
-        kind: TokenKind<'a>,
-    ) -> Self {
-        Token {
-            file,
-            line_content,
-
-            lineno,
-            columnno,
-
-            kind,
-        }
+    pub fn new(file: &'a str, span: Span, kind: TokenKind<'a>) -> Self {
+        Token { file, span, kind }
     }
 
     pub fn file(&self) -> &'a str {
         self.file
     }
 
-    pub fn line_content(&self) -> Option<&'a str> {
-        self.line_content
-    }
-
-    pub fn lineno(&self) -> u32 {
-        self.lineno
-    }
-
-    pub fn columnno(&self) -> u32 {
-        self.columnno
+    pub fn span(&self) -> &Span {
+        &self.span
     }
 
     pub fn kind(&self) -> &TokenKind<'a> {
         &self.kind
+    }
+}
+
+// Convenient is wrappers
+#[allow(dead_code)]
+impl<'a> Token<'a> {
+    pub fn is_identifier(&self) -> bool {
+        matches!(self.kind, TokenKind::Identifier { .. })
+    }
+
+    pub fn is_operator(&self, operator: OperatorKind) -> bool {
+        matches!(self.kind, TokenKind::Operator { kind } if kind == operator)
+    }
+
+    pub fn is_keyword(&self, keyword: KeywordKind) -> bool {
+        matches!(self.kind, TokenKind::Keyword { kind } if kind == keyword)
+    }
+
+    pub fn is_literal(&self, literal: &LiteralKind<'a>) -> bool {
+        matches!(&self.kind, TokenKind::Literal { kind } if kind == literal)
     }
 
     pub fn is_unknown(&self) -> bool {
@@ -59,13 +71,67 @@ impl<'a> Token<'a> {
     pub fn is_eof(&self) -> bool {
         matches!(self.kind, TokenKind::Eof)
     }
+}
 
-    pub fn is_identifier(&self) -> bool {
-        matches!(self.kind, TokenKind::Identifier { .. })
+// Integerkind is wrappers
+#[allow(dead_code)]
+impl<'a> Token<'a> {
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self.kind,
+            TokenKind::Literal {
+                kind: LiteralKind::Integer(_)
+            }
+        )
     }
 
-    pub fn is_literal(&self) -> bool {
-        matches!(self.kind, TokenKind::Literal { .. })
+    pub fn is_float(&self) -> bool {
+        matches!(
+            self.kind,
+            TokenKind::Literal {
+                kind: LiteralKind::Float(_)
+            }
+        )
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(
+            self.kind,
+            TokenKind::Literal {
+                kind: LiteralKind::String(_)
+            }
+        )
+    }
+}
+
+// LiteralKind as wrappers
+#[allow(dead_code)]
+impl<'a> Token<'a> {
+    pub fn as_integer(&self) -> Option<i64> {
+        match self.kind {
+            TokenKind::Literal {
+                kind: LiteralKind::Integer(i),
+            } => Some(i),
+            _ => None,
+        }
+    }
+
+    pub fn as_float(&self) -> Option<f64> {
+        match self.kind {
+            TokenKind::Literal {
+                kind: LiteralKind::Float(f),
+            } => Some(f.0),
+            _ => None,
+        }
+    }
+    
+    pub fn as_string(&self) -> Option<&str> {
+        match self.kind {
+            TokenKind::Literal {
+                kind: LiteralKind::String(ref s),
+            } => Some(s.as_ref()),
+            _ => None,
+        }
     }
 }
 
@@ -75,7 +141,7 @@ pub enum TokenKind<'a> {
     Identifier { name: &'a str, constant: bool },
     Operator { kind: OperatorKind },
     Keyword { kind: KeywordKind },
-    Literal { value: Cow<'a, str> },
+    Literal { kind: LiteralKind<'a> },
     Unknown,
     Eof,
 }
@@ -148,7 +214,48 @@ auto_display_enum! {
         Match => "match",
         Function => "function",
 
-        Set => "set"
+        Import => "import",
+
+        While => "while",
+    }
+}
+
+// SymbolKind
+auto_display_enum! {
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    #[allow(dead_code)]
+    pub enum SymbolKind {
+        Arrow => "->",
+        FatArrow => "=>",
+        Colon => ":",
+        DoubleColon => "::",
+        Semicolon => ";",
+        Comma => ",",
+        Dot => ".",
+        ParenOpen => "(",
+        ParenClose => ")",
+        BraceOpen => "{",
+        BraceClose => "}",
+        BracketOpen => "[",
+        BracketClose => "]",
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Eq)]
+#[allow(dead_code)]
+pub enum LiteralKind<'a> {
+    Integer(i64),
+    Float(OrderedFloat<f64>),
+    String(Cow<'a, str>),
+}
+
+impl<'a> Display for LiteralKind<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LiteralKind::Integer(i) => write!(f, "{}", i),
+            LiteralKind::Float(fl) => write!(f, "{}", fl),
+            LiteralKind::String(s) => write!(f, "\"{}\"", s),
+        }
     }
 }
 
@@ -184,7 +291,7 @@ impl PartialEq<Token<'_>> for KeywordKind {
 
 impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let path = format!("({} @ {}:{})", self.file, self.lineno, self.columnno);
+        let path = format!("({} @ {})", self.file, self.span);
 
         use TokenKind::*;
         match &self.kind {
@@ -206,8 +313,8 @@ impl<'a> Display for Token<'a> {
                 write!(f, "[Keyword] {} {}", kind, path)
             }
 
-            Literal { value } => {
-                write!(f, "[Literal] {} {}", value, path)
+            Literal { kind } => {
+                write!(f, "[Literal] {} {}", kind, path)
             }
 
             Operator { kind } => {
