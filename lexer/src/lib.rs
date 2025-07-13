@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use tokens::{KeywordKind, LiteralKind, OperatorKind, Span, Token, TokenKind};
+use tokens::{KeywordKind, LiteralKind, OperatorKind, Span, SymbolKind, Token, TokenKind};
 
 const TAB_WIDTH: u32 = 4;
 
@@ -54,56 +54,66 @@ impl<'a> Lexer<'a> {
         self.skip_whitespace();
         let current_char = self.stream[self.position];
 
-        if matches!(current_char, b'"' | b'\'') {
-            let start_pos = self.position;
-            let start_line = self.lineno;
-            let start_col = self.columnno;
+        let start_pos = self.position;
+        let start_col = self.columnno;
+        let start_line = self.lineno;
 
-            let read = self.read_string();
+        let mut span = Span {
+            start: start_pos,
+            end: self.position,
+
+            line: start_line,
+            col: start_col,
+        };
+
+        if let Some(symbol) = self.match_symbol() {
+            let len = match symbol {
+                SymbolKind::Arrow => 2,
+                SymbolKind::FatArrow => 2,
+                SymbolKind::DoubleColon => 2,
+
+                _ => 1
+            };
+
+            self.position += len;
+            self.columnno += len as u32;
+            self.read_position += len;
+
+            span.end = self.position;
 
             return Some(Token::new(
                 self.file,
-                Span {
-                    start: start_pos,
-                    end: self.position,
+                span,
+                TokenKind::Symbol { kind: symbol },
+            ));
+        } else if matches!(current_char, b'"' | b'\'') {
+            let read = self.read_string();
+            span.end = self.position;
 
-                    line: start_line,
-                    col: start_col,
-                },
+            return Some(Token::new(
+                self.file,
+                span,
                 TokenKind::Literal {
                     kind: LiteralKind::String(read),
                 },
             ));
         } else if is_operator(current_char) {
             // Operators
-            let lineno = self.lineno;
-            let columnno = self.columnno;
-
             let (kind, len) = self.match_operator();
-
-            let start = self.position;
 
             self.position += len;
             self.columnno += len as u32;
             self.read_position += len;
 
+            span.end = self.position;
+
             return Some(Token::new(
                 self.file,
-                Span {
-                    start,
-                    end: self.position,
-
-                    line: lineno,
-                    col: columnno,
-                },
+                span,
                 TokenKind::Operator { kind },
             ));
         } else if matches!(current_char, b'A'..=b'Z' | b'a'..=b'z' | b'_') {
             // Identifiers and keywords
-            let start_pos = self.position;
-            let start_col = self.columnno;
-            let start_line = self.lineno;
-
             while self.read_position < self.stream.len()
                 && matches!(self.stream[self.position], b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'0'..=b'9')
             {
@@ -125,26 +135,18 @@ impl<'a> Lexer<'a> {
                 }
             };
 
+            span.end = self.position;
+
             if let Some(kind) = self.match_keyword(read) {
+                return Some(Token::new(self.file, span, TokenKind::Keyword { kind }));
+            } else {
                 return Some(Token::new(
                     self.file,
-                    Span {
-                        start: start_pos,
-                        end: self.position,
-
-                        line: start_line,
-                        col: start_col,
-                    },
-                    TokenKind::Keyword { kind },
+                    span,
+                    TokenKind::Identifier { name: read },
                 ));
-            } else {
-                todo!("Handle identifier {}", read);
             }
         } else if matches!(current_char, b'0'..b'9') {
-            let start_pos = self.position;
-            let start_col = self.columnno;
-            let start_line = self.lineno;
-
             let mut radix = 10;
             if current_char == b'0'
                 && let Some(peek) = self.peek_char()
@@ -195,31 +197,24 @@ impl<'a> Lexer<'a> {
                 }
             };
 
+            span.end = self.position;
             if let Some(parsed) = self.parse_integer_literal(&read) {
                 return Some(Token::new(
                     self.file,
-                    Span {
-                        start: start_pos,
-                        end: self.position,
-
-                        line: start_line,
-                        col: start_col,
-                    },
+                    span,
                     TokenKind::Literal {
                         kind: LiteralKind::Integer(parsed),
                     },
                 ));
+            } else {
+                panic!()
             }
         }
 
+        self.next_char();
         return Some(Token::new(
             self.file,
-            Span {
-                start: self.position,
-                end: self.position,
-                line: self.lineno,
-                col: self.columnno,
-            },
+            span,
             TokenKind::Unknown,
         ));
     }
@@ -281,6 +276,30 @@ impl<'a> Lexer<'a> {
             (b'~', _) => (OperatorKind::BitNot, 1),
 
             _ => (OperatorKind::Error, 1), // fallback or error
+        }
+    }
+
+    fn match_symbol(&self) -> Option<SymbolKind> {
+        let current_char = self.stream[self.position];
+        let peek_char = self.peek_char().unwrap_or(0);
+
+        match (current_char, peek_char) {
+            (b'-', b'>') => Some(SymbolKind::Arrow),
+            (b'=', b'>') => Some(SymbolKind::FatArrow),
+            (b':', b':') => Some(SymbolKind::DoubleColon),
+
+            (b':', _) => Some(SymbolKind::Colon),
+            (b';', _) => Some(SymbolKind::Semicolon),
+            (b',', _) => Some(SymbolKind::Comma),
+            (b'.', _) => Some(SymbolKind::Dot),
+            (b'(', _) => Some(SymbolKind::ParenOpen),
+            (b')', _) => Some(SymbolKind::ParenClose),
+            (b'{', _) => Some(SymbolKind::BraceOpen),
+            (b'}', _) => Some(SymbolKind::BraceClose),
+            (b'[', _) => Some(SymbolKind::BracketOpen),
+            (b']', _) => Some(SymbolKind::BracketClose),
+
+            _ => None,
         }
     }
 
@@ -616,19 +635,16 @@ fn can_do_integers() {
         ("0xdeadbeef", 0xdeadbeef),
         ("0xDE_AD_BE_EF", 0xDEADBEEF),
         ("0XFF", 255),
-
         // Binary
         ("0b0", 0),
         ("0b1010", 10),
         ("0b1111_0000", 0b11110000),
         ("0B0101", 5),
-
         // Octal
         ("0o0", 0),
         ("0o77", 63),
         ("0o123", 83),
         ("0O7_7", 63),
-
         // Decimal
         ("0", 0),
         ("1", 1),
@@ -658,5 +674,41 @@ fn can_do_integers() {
             expected_output,
             token.as_integer()
         );
+    }
+}
+
+#[test]
+fn can_do_symbols() {
+    let test_cases = vec![
+        ("->", SymbolKind::Arrow),
+        ("=>", SymbolKind::FatArrow),
+        ("::", SymbolKind::DoubleColon),
+        (":", SymbolKind::Colon),
+        (";", SymbolKind::Semicolon),
+        (",", SymbolKind::Comma),
+        (".", SymbolKind::Dot),
+        ("(", SymbolKind::ParenOpen),
+        (")", SymbolKind::ParenClose),
+        ("{", SymbolKind::BraceOpen),
+        ("}", SymbolKind::BraceClose),
+        ("[", SymbolKind::BracketOpen),
+        ("]", SymbolKind::BracketClose),
+    ];
+
+    for (input_str, expected_output) in test_cases {
+        let data: Vec<u8> = input_str.as_bytes().into();
+        let mut l = Lexer::new("testing", &data);
+
+        let token = l.next_token();
+
+        assert!(
+            token.is_some(),
+            "Lexer failed to make a token: {}",
+            input_str
+        );
+
+        dbg!(&token);
+
+        assert!(token.unwrap() == expected_output);
     }
 }

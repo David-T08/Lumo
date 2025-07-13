@@ -1,16 +1,30 @@
 use lexer::Lexer;
+use std::io::{self, Write};
 
-fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
-    // let input = "\"Hello, world!\"+-while";
-    let input = "while true 123 0x1F 0b110101 true";
-    let data: Vec<u8> = input.as_bytes().into();
+fn main() {
+    println!("Lumo 0.1.0 RLPL");
+    println!("  Type exit to stop execution");
 
-    println!("Lexing: {}, {}", input, input.len());
+    loop {
+        print!("> ");
+        io::stdout().flush().unwrap();
 
-    let l = Lexer::new("main.rs", &data);
-    l.for_each(|tok| {
-        println!("{tok}");
-    });
+        let mut command = String::new();
+        if io::stdin().read_line(&mut command).is_err() {
+            println!("Failed to read input");
+            continue;
+        }
 
-    Ok(())
+        let command = command.trim();
+        if command == "exit" {
+            break;
+        }
+
+        let command: Vec<u8> = command.as_bytes().into();
+
+        let l = Lexer::new("cli", &command);
+        l.for_each(|tok| {
+            println!("{tok}");
+        });
+    }
 }

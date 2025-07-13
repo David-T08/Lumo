@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter};
 
 pub mod macros;
 
+#[derive(Debug)]
 pub struct Span {
     pub start: usize, // Inclusive byte offset in source
     pub end: usize,   // Inclusive end byte offset
@@ -19,6 +20,7 @@ impl Display for Span {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct Token<'a> {
     file: &'a str,
     span: Span,
@@ -54,6 +56,10 @@ impl<'a> Token<'a> {
 
     pub fn is_operator(&self, operator: OperatorKind) -> bool {
         matches!(self.kind, TokenKind::Operator { kind } if kind == operator)
+    }
+
+    pub fn is_symbol(&self, symbol: SymbolKind) -> bool {
+        matches!(self.kind, TokenKind::Symbol { kind } if kind == symbol)
     }
 
     pub fn is_keyword(&self, keyword: KeywordKind) -> bool {
@@ -124,7 +130,7 @@ impl<'a> Token<'a> {
             _ => None,
         }
     }
-    
+
     pub fn as_string(&self) -> Option<&str> {
         match self.kind {
             TokenKind::Literal {
@@ -138,10 +144,11 @@ impl<'a> Token<'a> {
 #[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum TokenKind<'a> {
-    Identifier { name: &'a str, constant: bool },
+    Identifier { name: &'a str },
     Operator { kind: OperatorKind },
     Keyword { kind: KeywordKind },
     Literal { kind: LiteralKind<'a> },
+    Symbol { kind: SymbolKind },
     Unknown,
     Eof,
 }
@@ -227,8 +234,8 @@ auto_display_enum! {
     pub enum SymbolKind {
         Arrow => "->",
         FatArrow => "=>",
-        Colon => ":",
         DoubleColon => "::",
+        Colon => ":",
         Semicolon => ";",
         Comma => ",",
         Dot => ".",
@@ -289,28 +296,37 @@ impl PartialEq<Token<'_>> for KeywordKind {
     }
 }
 
+// Equality between a Token and SymbolKind
+impl PartialEq<SymbolKind> for Token<'_> {
+    fn eq(&self, other: &SymbolKind) -> bool {
+        matches!(self.kind,
+            TokenKind::Symbol { kind } if kind == *other
+        )
+    }
+}
+
+impl PartialEq<Token<'_>> for SymbolKind {
+    fn eq(&self, other: &Token) -> bool {
+        other == self
+    }
+}
+
 impl<'a> Display for Token<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let path = format!("({} @ {})", self.file, self.span);
 
         use TokenKind::*;
         match &self.kind {
-            Identifier { name, constant, .. } => {
-                write!(
-                    f,
-                    "{} {} {}",
-                    if *constant {
-                        "[Constant]"
-                    } else {
-                        "[Identifier]"
-                    },
-                    name,
-                    path
-                )
+            Identifier { name, .. } => {
+                write!(f, "{} {} {}", "[Identifier]", name, path)
             }
 
             Keyword { kind } => {
                 write!(f, "[Keyword] {} {}", kind, path)
+            }
+
+            Symbol { kind } => {
+                write!(f, "[Symbol] {} {}", kind, path)
             }
 
             Literal { kind } => {
