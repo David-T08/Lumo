@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use tokens::{KeywordKind, LiteralKind, OperatorKind, Span, SymbolKind, Token, TokenKind};
+use crate::tokens::{KeywordKind, LiteralKind, OperatorKind, Span, SymbolKind, Token, TokenKind};
 
 const TAB_WIDTH: u32 = 4;
 
@@ -72,7 +72,7 @@ impl<'a> Lexer<'a> {
                 SymbolKind::FatArrow => 2,
                 SymbolKind::DoubleColon => 2,
 
-                _ => 1
+                _ => 1,
             };
 
             self.position += len;
@@ -107,11 +107,7 @@ impl<'a> Lexer<'a> {
 
             span.end = self.position;
 
-            return Some(Token::new(
-                self.file,
-                span,
-                TokenKind::Operator { kind },
-            ));
+            return Some(Token::new(self.file, span, TokenKind::Operator { kind }));
         } else if matches!(current_char, b'A'..=b'Z' | b'a'..=b'z' | b'_') {
             // Identifiers and keywords
             while self.read_position < self.stream.len()
@@ -212,11 +208,7 @@ impl<'a> Lexer<'a> {
         }
 
         self.next_char();
-        return Some(Token::new(
-            self.file,
-            span,
-            TokenKind::Unknown,
-        ));
+        return Some(Token::new(self.file, span, TokenKind::Unknown));
     }
 
     fn match_operator(&self) -> (OperatorKind, usize) {
@@ -272,7 +264,6 @@ impl<'a> Lexer<'a> {
             (b'^', b'=') => (OperatorKind::BitXorAssign, 2),
             (b'^', _) => (OperatorKind::BitXor, 1),
 
-            (b'~', b'=') => (OperatorKind::BitNotAssign, 2),
             (b'~', _) => (OperatorKind::BitNot, 1),
 
             _ => (OperatorKind::Error, 1), // fallback or error
@@ -575,8 +566,7 @@ fn can_do_operators() {
         ("^=", OperatorKind::BitXorAssign),
         ("&", OperatorKind::BitAnd),
         ("&=", OperatorKind::BitAndAssign),
-        ("~", OperatorKind::BitNot),
-        ("~=", OperatorKind::BitNotAssign),
+        ("~", OperatorKind::BitNot)
     ];
 
     for (input_str, expected_output) in test_cases {

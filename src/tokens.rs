@@ -2,9 +2,9 @@ use ordered_float::OrderedFloat;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
-pub mod macros;
+use crate::auto_display_enum;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Span {
     pub start: usize, // Inclusive byte offset in source
     pub end: usize,   // Inclusive end byte offset
@@ -198,9 +198,70 @@ auto_display_enum! {
         BitAnd => "&",
         BitAndAssign => "&=",
         BitNot => "~",
-        BitNotAssign => "~=",
 
         Error => "\0"
+    }
+}
+
+type O = OperatorKind;
+impl OperatorKind {
+    pub fn is_math(&self) -> bool {
+        matches!(
+            self,
+            O::Add | O::Subtract | O::Multiply | O::Divide | O::Modulo
+        )
+    }
+
+    pub fn is_assignment(&self) -> bool {
+        matches!(
+            self,
+            O::AddAssign
+                | O::SubtractAssign
+                | O::MultiplyAssign
+                | O::DivideAssign
+                | O::ModuloAssign
+                | O::LeftShiftAssign
+                | O::RightShiftAssign
+                | O::BitOrAssign
+                | O::BitXorAssign
+                | O::BitAndAssign
+        )
+    }
+
+    pub fn is_binary(&self) -> bool {
+        matches!(
+            self,
+            O::LeftShift | O::RightShift | O::BitOr | O::BitXor | O::BitAnd | O::BitNot
+        )
+    }
+
+    pub fn is_binary_infix(&self) -> bool {
+        self.is_comparison() || self.is_math() || (!matches!(self, O::BitNot) && self.is_binary())
+    }
+
+    pub fn is_comparison(&self) -> bool {
+        matches!(
+            self,
+            O::Equal
+                | O::NotEqual
+                | O::LessThan
+                | O::LessThanEqual
+                | O::GreaterThan
+                | O::GreaterThanEqual
+                | O::CompAnd
+                | O::CompOr
+        )
+    }
+
+    pub fn is_prefix(&self) -> bool {
+        matches!(
+            self,
+            O::Increment | O::Decrement | O::Subtract | O::Bang | O::BitNot
+        )
+    }
+
+    pub fn is_postfix(&self) -> bool {
+        matches!(self, O::Increment | O::Decrement)
     }
 }
 
@@ -322,19 +383,19 @@ impl<'a> Display for Token<'a> {
             }
 
             Keyword { kind } => {
-                write!(f, "[Keyword] {} {}", kind, path)
+                write!(f, "[Keyword]    {} {}", kind, path)
             }
 
             Symbol { kind } => {
-                write!(f, "[Symbol] {} {}", kind, path)
+                write!(f, "[Symbol]     {} {}", kind, path)
             }
 
             Literal { kind } => {
-                write!(f, "[Literal] {} {}", kind, path)
+                write!(f, "[Literal]    {} {}", kind, path)
             }
 
             Operator { kind } => {
-                write!(f, "[Operator] {} {}", kind, path)
+                write!(f, "[Operator]   {} {}", kind, path)
             }
 
             Unknown => {
