@@ -1,12 +1,12 @@
 mod ast;
 mod lexer;
+mod macros;
 mod parser;
 mod tokens;
-mod macros;
 
-use lexer::Lexer;
 use std::io::{self, Write};
-use string_interner::{StringInterner, backend::BucketBackend, symbol::SymbolU32};
+
+use crate::{lexer::Lexer, parser::Parser};
 
 fn main() {
     println!("Lumo 0.1.0 RLPL");
@@ -28,11 +28,16 @@ fn main() {
         }
 
         let command: Vec<u8> = command.as_bytes().into();
-        let mut interner = StringInterner::<BucketBackend>::new();
 
-        let l = Lexer::new("cli", &command);
-        l.for_each(|tok| {
+        let lexer = Lexer::new("cli", &command);
+        for tok in Lexer::new("cli", &command) {
             println!("{tok}");
-        });
+        }
+
+        println!("\n== Parsing ==");
+        let mut parser = Parser::new(lexer);
+        let program = parser.parse_program();
+
+        dbg!(program);
     }
 }

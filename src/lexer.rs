@@ -1,5 +1,7 @@
+use crate::tokens::{
+    KeywordKind, LiteralKind, OperatorKind, Span, Sym, SymbolKind, Token, TokenKind, interner,
+};
 use std::borrow::Cow;
-use crate::tokens::{KeywordKind, LiteralKind, OperatorKind, Span, SymbolKind, Token, TokenKind};
 
 const TAB_WIDTH: u32 = 4;
 
@@ -20,7 +22,7 @@ fn is_operator(character: u8) -> bool {
 #[allow(dead_code)]
 pub struct Lexer<'a> {
     // Source file we're lexing
-    file: &'a str,
+    file: Sym,
     stream: &'a Vec<u8>,
 
     // Human positions
@@ -34,8 +36,9 @@ pub struct Lexer<'a> {
 
 impl<'a> Lexer<'a> {
     pub fn new(file_path: &'a str, data: &'a Vec<u8>) -> Lexer<'a> {
+        let mut guard = interner().write().unwrap();
         Lexer {
-            file: file_path,
+            file: guard.get_or_intern(file_path),
             stream: data,
 
             lineno: 1,
@@ -46,7 +49,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_token(&mut self) -> Option<Token<'a>> {
+    pub fn next_token(&mut self) -> Option<Token> {
         if self.position >= self.stream.len() {
             return None;
         }
@@ -90,11 +93,13 @@ impl<'a> Lexer<'a> {
             let read = self.read_string();
             span.end = self.position;
 
+            let mut guard = interner().write().unwrap();
+
             return Some(Token::new(
                 self.file,
                 span,
                 TokenKind::Literal {
-                    kind: LiteralKind::String(read),
+                    kind: LiteralKind::String(guard.get_or_intern(read)),
                 },
             ));
         } else if is_operator(current_char) {
@@ -136,10 +141,14 @@ impl<'a> Lexer<'a> {
             if let Some(kind) = self.match_keyword(read) {
                 return Some(Token::new(self.file, span, TokenKind::Keyword { kind }));
             } else {
+                let mut guard = interner().write().unwrap();
+
                 return Some(Token::new(
                     self.file,
                     span,
-                    TokenKind::Identifier { name: read },
+                    TokenKind::Identifier {
+                        name: guard.get_or_intern(read),
+                    },
                 ));
             }
         } else if matches!(current_char, b'0'..b'9') {
@@ -311,6 +320,7 @@ impl<'a> Lexer<'a> {
             "import" => Some(KeywordKind::Import),
 
             "while" => Some(KeywordKind::While),
+            "let" => Some(KeywordKind::Let),
             _ => None,
         };
     }
@@ -486,7 +496,7 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Token<'a>;
+    type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_token()
@@ -522,7 +532,7 @@ fn can_do_strings() {
         let token = token.unwrap();
         assert_eq!(
             token.as_string(),
-            Some(expected_output),
+            Some(expected_output.into()),
             "Mismatch for input: {}. Expected '{}', got '{:?}'",
             input_str,
             expected_output,
@@ -566,7 +576,7 @@ fn can_do_operators() {
         ("^=", OperatorKind::BitXorAssign),
         ("&", OperatorKind::BitAnd),
         ("&=", OperatorKind::BitAndAssign),
-        ("~", OperatorKind::BitNot)
+        ("~", OperatorKind::BitNot),
     ];
 
     for (input_str, expected_output) in test_cases {

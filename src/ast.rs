@@ -1,14 +1,24 @@
-use std::{ops::Deref};
+use crate::{
+    parser::ParserError,
+    tokens::{OperatorKind, Span},
+};
+use std::{
+    fmt::{Display, Formatter},
+    ops::Deref,
+};
 use string_interner::symbol::SymbolU32;
-use crate::tokens::{OperatorKind, Span};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Spanned<T> {
-    value: T,
-    span: Span,
+    pub value: T,
+    pub span: Span,
 }
 
 impl<T> Spanned<T> {
+    pub fn new(value: T, span: Span) -> Self {
+        Self { value, span }
+    }
+
     pub fn span(&self) -> &Span {
         &self.span
     }
@@ -22,23 +32,29 @@ impl<T> Deref for Spanned<T> {
     }
 }
 
+impl<T> Display for Spanned<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}:{}|{}:{}",
+            self.span.line, self.span.col, self.span.start, self.span.end
+        )
+    }
+}
+
 pub type Stmt = Spanned<Statement>;
 pub type Expr = Spanned<Expression>;
 pub type Ident = Spanned<Identifier>;
 pub type SpannedOp = Spanned<OperatorKind>;
 
+#[derive(Debug)]
 pub enum PlaceExpression {
     Identifier(Ident),
-    Index {
-        array: Expr,
-        index: Expr,
-    },
-    Field {
-        object: Expr,
-        field: Ident,
-    },
+    Index { array: Expr, index: Expr },
+    Field { object: Expr, field: Ident },
 }
 
+#[derive(Debug)]
 pub enum Statement {
     Block(BlockStatement),
     Declaration(DeclarationStatement),
@@ -46,43 +62,48 @@ pub enum Statement {
     While(WhileStatement),
     Expression(ExpressionStatement),
     // Import,
-
     Break,
     Continue,
     Return(ReturnStatement),
 }
 
+#[derive(Debug)]
 pub struct BlockStatement {
-    statements: Vec<Stmt>,
+    pub statements: Vec<Stmt>,
 }
 
+#[derive(Debug)]
 pub struct DeclarationStatement {
-    ty: Ident,
-    name: Ident,
-    value: Option<Expr>,
-    constant: bool,
+    pub ty: Option<Ident>,
+    pub name: Ident,
+    pub value: Option<Expr>,
+    pub constant: bool,
 }
 
+#[derive(Debug)]
 pub struct AssignmentStatement {
-    op: SpannedOp,
-    target: Spanned<PlaceExpression>,
-    value: Expr
+    pub op: SpannedOp,
+    pub target: Spanned<PlaceExpression>,
+    pub value: Expr,
 }
 
+#[derive(Debug)]
 pub struct WhileStatement {
-    condition: Expr,
-    body: Spanned<BlockStatement>
+    pub condition: Expr,
+    pub body: Spanned<BlockStatement>,
 }
 
+#[derive(Debug)]
 pub struct ExpressionStatement {
-    expr: Expr
+    pub expr: Expr,
 }
 
+#[derive(Debug)]
 pub struct ReturnStatement {
-    value: Expr
+    pub value: Expr,
 }
 
-
+#[derive(Debug)]
 pub enum Expression {
     Identifier(Identifier),
 
@@ -95,7 +116,7 @@ pub enum Expression {
 
     Prefix(PrefixExpression),
     Postfix(PostfixExpression),
-    
+
     Binary(BinaryExpression),
 
     Call(CallExpression),
@@ -103,51 +124,68 @@ pub enum Expression {
     If,
 }
 
+#[derive(Debug)]
 pub struct Identifier {
-    name: SymbolU32,
+    pub name: SymbolU32,
 }
 
+#[derive(Debug)]
 pub struct Literal<T> {
-    value: T,
+    pub value: T,
 }
 
+impl From<bool> for Literal<bool> {
+    fn from(value: bool) -> Self {
+        Literal { value }
+    }
+}
+
+#[derive(Debug)]
 pub struct FunctionLiteral {
-    parameters: Vec<Ident>,
-    body: Spanned<BlockStatement>,
+    pub parameters: Vec<Ident>,
+    pub body: Spanned<BlockStatement>,
 }
 
+#[derive(Debug)]
 pub struct ArrayLiteral {
-    elements: Vec<Expr>,
+    pub elements: Vec<Expr>,
 }
 
+#[derive(Debug)]
 pub struct PrefixExpression {
-    op: SpannedOp,
-    right: Box<Expr>,
+    pub op: SpannedOp,
+    pub right: Box<Expr>,
 }
 
+#[derive(Debug)]
 pub struct PostfixExpression {
-    left: Box<Expr>,
-    op: SpannedOp
+    pub left: Box<Expr>,
+    pub op: SpannedOp,
 }
 
+#[derive(Debug)]
 pub struct BinaryExpression {
-    left: Box<Expr>,
-    op: SpannedOp,
-    right: Box<Expr>
+    pub left: Box<Expr>,
+    pub op: SpannedOp,
+    pub right: Box<Expr>,
 }
 
-pub struct CallExpression  {
-    function: Box<Expr>,
-    arguments: Vec<Expr>
+#[derive(Debug)]
+pub struct CallExpression {
+    pub function: Box<Expr>,
+    pub arguments: Vec<Expr>,
 }
 
+#[derive(Debug)]
 pub struct IfExpression {
-    condition: Box<Expr>,
-    consequence: BlockStatement,
+    pub condition: Box<Expr>,
+    pub consequence: BlockStatement,
     // TODO: Represent if-else chain later
-    alternate: Option<BlockStatement>
+    pub alternate: Option<BlockStatement>,
 }
 
+#[derive(Debug)]
 pub struct Program {
     pub statements: Vec<Stmt>,
+    pub errors: Vec<ParserError>,
 }

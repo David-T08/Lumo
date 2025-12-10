@@ -1,8 +1,21 @@
+use crate::{
+    ast::{Ident, Identifier},
+    auto_display_enum,
+};
 use ordered_float::OrderedFloat;
-use std::borrow::Cow;
-use std::fmt::{Display, Formatter};
+use std::{
+    borrow::Cow,
+    fmt::{Display, Formatter},
+    sync::{OnceLock, RwLock},
+};
+use string_interner::{DefaultBackend, DefaultSymbol, StringInterner};
 
-use crate::auto_display_enum;
+static INTERNER: OnceLock<RwLock<StringInterner<DefaultBackend>>> = OnceLock::new();
+pub fn interner() -> &'static RwLock<StringInterner<DefaultBackend>> {
+    INTERNER.get_or_init(|| RwLock::new(StringInterner::default()))
+}
+
+pub type Sym = DefaultSymbol;
 
 #[derive(Debug, Clone)]
 pub struct Span {
@@ -14,27 +27,38 @@ pub struct Span {
 }
 
 impl Display for Span {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "{}:{}", self.line, self.col)
+    }
+}
+
+impl Span {
+    pub fn new(start: usize, end: usize, line: u32, col: u32) -> Self {
+        Self {
+            start,
+            end,
+            line,
+            col,
+        }
     }
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
-pub struct Token<'a> {
-    file: &'a str,
+pub struct Token {
+    file: Sym,
     span: Span,
 
-    kind: TokenKind<'a>,
+    kind: TokenKind,
 }
 
 #[allow(dead_code)]
-impl<'a> Token<'a> {
-    pub fn new(file: &'a str, span: Span, kind: TokenKind<'a>) -> Self {
+impl Token {
+    pub fn new(file: Sym, span: Span, kind: TokenKind) -> Self {
         Token { file, span, kind }
     }
 
-    pub fn file(&self) -> &'a str {
+    pub fn file(&self) -> Sym {
         self.file
     }
 
@@ -42,14 +66,26 @@ impl<'a> Token<'a> {
         &self.span
     }
 
-    pub fn kind(&self) -> &TokenKind<'a> {
+    pub fn kind(&self) -> &TokenKind {
         &self.kind
+    }
+
+    pub fn name(&self) -> String {
+        match &self.kind {
+            TokenKind::Identifier { .. } => "IDENT".into(),
+            TokenKind::Operator { kind } => format!("{kind}").into(),
+            TokenKind::Keyword { kind } => format!("{kind}").into(),
+            TokenKind::Symbol { kind } => format!("{kind}").into(),
+            TokenKind::Literal { kind } => kind.name().into(),
+            TokenKind::Unknown => "INVALID".into(),
+            TokenKind::Eof => "EOF".into(),
+        }
     }
 }
 
 // Convenient is wrappers
 #[allow(dead_code)]
-impl<'a> Token<'a> {
+impl Token {
     pub fn is_identifier(&self) -> bool {
         matches!(self.kind, TokenKind::Identifier { .. })
     }
@@ -66,7 +102,7 @@ impl<'a> Token<'a> {
         matches!(self.kind, TokenKind::Keyword { kind } if kind == keyword)
     }
 
-    pub fn is_literal(&self, literal: &LiteralKind<'a>) -> bool {
+    pub fn is_literal(&self, literal: &LiteralKind) -> bool {
         matches!(&self.kind, TokenKind::Literal { kind } if kind == literal)
     }
 
@@ -81,7 +117,7 @@ impl<'a> Token<'a> {
 
 // Integerkind is wrappers
 #[allow(dead_code)]
-impl<'a> Token<'a> {
+impl Token {
     pub fn is_integer(&self) -> bool {
         matches!(
             self.kind,
@@ -112,7 +148,7 @@ impl<'a> Token<'a> {
 
 // LiteralKind as wrappers
 #[allow(dead_code)]
-impl<'a> Token<'a> {
+impl Token {
     pub fn as_integer(&self) -> Option<i64> {
         match self.kind {
             TokenKind::Literal {
@@ -131,11 +167,27 @@ impl<'a> Token<'a> {
         }
     }
 
-    pub fn as_string(&self) -> Option<&str> {
+    pub fn as_string(&self) -> Option<String> {
         match self.kind {
             TokenKind::Literal {
-                kind: LiteralKind::String(ref s),
-            } => Some(s.as_ref()),
+                kind: LiteralKind::String(s),
+            } => {
+                let guard = interner().read().unwrap();
+
+                guard.resolve(s).map(|s| s.to_owned())
+            }
+            _ => None,
+        }
+    }
+
+    pub fn as_interned_symbol(&self) -> Option<DefaultSymbol> {
+        match self.kind {
+            TokenKind::Literal {
+                kind: LiteralKind::String(s),
+            } => Some(s),
+
+            TokenKind::Identifier { name } => Some(name),
+
             _ => None,
         }
     }
@@ -143,11 +195,11 @@ impl<'a> Token<'a> {
 
 #[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub enum TokenKind<'a> {
-    Identifier { name: &'a str },
+pub enum TokenKind {
+    Identifier { name: Sym },
     Operator { kind: OperatorKind },
     Keyword { kind: KeywordKind },
-    Literal { kind: LiteralKind<'a> },
+    Literal { kind: LiteralKind },
     Symbol { kind: SymbolKind },
     Unknown,
     Eof,
@@ -276,6 +328,7 @@ auto_display_enum! {
         If => "if",
         Else => "else",
 
+        While => "while",
         Break => "break",
         Return => "return",
 
@@ -283,8 +336,8 @@ auto_display_enum! {
         Function => "function",
 
         Import => "import",
-
-        While => "while",
+        Let => "let",
+        Const => "const"
     }
 }
 
@@ -311,24 +364,42 @@ auto_display_enum! {
 
 #[derive(Debug, PartialEq, Clone, Eq)]
 #[allow(dead_code)]
-pub enum LiteralKind<'a> {
+pub enum LiteralKind {
     Integer(i64),
     Float(OrderedFloat<f64>),
-    String(Cow<'a, str>),
+    String(Sym),
 }
 
-impl<'a> Display for LiteralKind<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+impl LiteralKind {
+    pub fn name(&self) -> &str {
         match self {
+            LiteralKind::Float { .. } => "FLOAT",
+            LiteralKind::Integer { .. } => "INT",
+            LiteralKind::String { .. } => "STR",
+        }
+        .into()
+    }
+}
+
+impl Display for LiteralKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match *self {
             LiteralKind::Integer(i) => write!(f, "{}", i),
             LiteralKind::Float(fl) => write!(f, "{}", fl),
-            LiteralKind::String(s) => write!(f, "\"{}\"", s),
+            LiteralKind::String(s) => write!(f, "\"{}\"", {
+                let guard = interner().read().unwrap();
+
+                match guard.resolve(s) {
+                    Some(s) => s.to_owned(),
+                    None => "".into(),
+                }
+            }),
         }
     }
 }
 
 // Equality between a Token and OperatorKind
-impl PartialEq<OperatorKind> for Token<'_> {
+impl PartialEq<OperatorKind> for Token {
     fn eq(&self, other: &OperatorKind) -> bool {
         matches!(self.kind,
             TokenKind::Operator { kind } if kind == *other
@@ -336,14 +407,14 @@ impl PartialEq<OperatorKind> for Token<'_> {
     }
 }
 
-impl PartialEq<Token<'_>> for OperatorKind {
+impl PartialEq<Token> for OperatorKind {
     fn eq(&self, other: &Token) -> bool {
         other == self
     }
 }
 
 // Equality between a Token and KeywordKind
-impl PartialEq<KeywordKind> for Token<'_> {
+impl PartialEq<KeywordKind> for Token {
     fn eq(&self, other: &KeywordKind) -> bool {
         matches!(self.kind,
             TokenKind::Keyword { kind } if kind == *other
@@ -351,14 +422,14 @@ impl PartialEq<KeywordKind> for Token<'_> {
     }
 }
 
-impl PartialEq<Token<'_>> for KeywordKind {
+impl PartialEq<Token> for KeywordKind {
     fn eq(&self, other: &Token) -> bool {
         other == self
     }
 }
 
 // Equality between a Token and SymbolKind
-impl PartialEq<SymbolKind> for Token<'_> {
+impl PartialEq<SymbolKind> for Token {
     fn eq(&self, other: &SymbolKind) -> bool {
         matches!(self.kind,
             TokenKind::Symbol { kind } if kind == *other
@@ -366,20 +437,31 @@ impl PartialEq<SymbolKind> for Token<'_> {
     }
 }
 
-impl PartialEq<Token<'_>> for SymbolKind {
+impl PartialEq<Token> for SymbolKind {
     fn eq(&self, other: &Token) -> bool {
         other == self
     }
 }
 
-impl<'a> Display for Token<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let path = format!("({} @ {})", self.file, self.span);
+impl Display for Token {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        let guard = interner().read().unwrap();
+        let path = format!(
+            "({} @ {})",
+            guard.resolve(self.file).unwrap_or(""),
+            self.span
+        );
 
         use TokenKind::*;
         match &self.kind {
             Identifier { name, .. } => {
-                write!(f, "{} {} {}", "[Identifier]", name, path)
+                write!(
+                    f,
+                    "{} {} {}",
+                    "[Identifier]",
+                    guard.resolve(*name).unwrap_or(""),
+                    path
+                )
             }
 
             Keyword { kind } => {
