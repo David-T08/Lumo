@@ -44,7 +44,7 @@ impl Span {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     file: Sym,
     span: Span,
@@ -80,6 +80,16 @@ impl Token {
             TokenKind::Unknown => "INVALID".into(),
             TokenKind::Eof => "EOF".into(),
         }
+    }
+
+    pub fn path(&self) -> String {
+        let guard = interner().read().unwrap();
+        
+        format!(
+            "({} @ {})",
+            guard.resolve(self.file).unwrap_or(""),
+            self.span
+        )
     }
 }
 

@@ -24,6 +24,8 @@ pub struct Lexer<'a> {
     // Source file we're lexing
     file: Sym,
     stream: &'a Vec<u8>,
+    
+    finished: bool,
 
     // Human positions
     lineno: u32,
@@ -40,6 +42,8 @@ impl<'a> Lexer<'a> {
         Lexer {
             file: guard.get_or_intern(file_path),
             stream: data,
+            
+            finished: false,
 
             lineno: 1,
             columnno: 1,
@@ -50,8 +54,20 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token(&mut self) -> Option<Token> {
-        if self.position >= self.stream.len() {
+        if self.finished {
             return None;
+        }
+        
+        if self.position >= self.stream.len() {
+            self.finished = true;
+            
+            return Some(Token::new(self.file, Span {
+                start: self.position,
+                end: self.position,
+                
+                line: self.lineno,
+                col: self.columnno
+            }, TokenKind::Eof))
         }
 
         self.skip_whitespace();
@@ -321,6 +337,7 @@ impl<'a> Lexer<'a> {
 
             "while" => Some(KeywordKind::While),
             "let" => Some(KeywordKind::Let),
+            "const" => Some(KeywordKind::Const),
             _ => None,
         };
     }
