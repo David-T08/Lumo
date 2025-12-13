@@ -1,6 +1,9 @@
+use std::fmt::{Display, Formatter};
+use tracing::{trace, debug, info, warn, error};
+
 use crate::{
-    ast::{self, BlockStatement, Expression, Identifier, Spanned, Statement},
-    tokens::{KeywordKind, LiteralKind, OperatorKind, Span, SymbolKind, Token, TokenKind},
+    ast::{self, BlockStatement, Expression, Identifier, Literal, Spanned, Statement},
+    tokens::{KeywordKind, LiteralKind, OperatorKind, Span, SymbolKind, Token, TokenKind, interner},
 };
 
 enum Precedence {
@@ -22,6 +25,24 @@ pub enum ParserError {
     },
 }
 
+impl Display for ParserError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParserError::IncorrectToken { encountered, expected } => {
+                writeln!(
+                    f,
+                    "error: expected `{}`, got {} `{}`",
+                    expected,
+                    "a",
+                    encountered.as_ref().map(|t| t.name()).unwrap_or("<none>".into())
+                )?;
+                
+                write!(f, "hi")
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpectedToken {
     Keyword(KeywordKind),
@@ -37,6 +58,32 @@ pub enum ExpectedToken {
     Identifier,
     IdentifierNamed(crate::tokens::Sym)
 }
+
+impl Display for ExpectedToken {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExpectedToken::Keyword(k)   => write!(f, "keyword `{}`", k),
+            ExpectedToken::Symbol(s)    => write!(f, "symbol `{}`", s),
+            ExpectedToken::Operator(o)  => write!(f, "operator `{}`", o),
+
+            // If you keep this variant, it’s fine to print exact value:
+            ExpectedToken::LiteralExact(l) => write!(f, "literal `{}`", l),
+
+            ExpectedToken::LiteralAny    => write!(f, "a literal"),
+            ExpectedToken::LiteralInt    => write!(f, "an integer literal"),
+            ExpectedToken::LiteralFloat  => write!(f, "a float literal"),
+            ExpectedToken::LiteralString => write!(f, "a string literal"),
+
+            ExpectedToken::Identifier => write!(f, "an identifier"),
+            ExpectedToken::IdentifierNamed(sym) => {
+                let guard = interner().read().unwrap();
+                let name = guard.resolve(*sym).unwrap_or("<unknown>");
+                write!(f, "identifier `{}`", name)
+            }
+        }
+    }
+}
+
 
 impl From<KeywordKind> for ExpectedToken {
     fn from(k: KeywordKind) -> Self {
@@ -93,7 +140,7 @@ where
         K: Copy + Clone + std::fmt::Display + Into<ExpectedToken>,
     {
         if self.peek_is(kind) {
-            println!("Peek succeeded for {} {}", kind, self.peek.as_ref().unwrap().path());
+            info!("Peek succeeded for {} {}", kind, self.peek.as_ref().unwrap().path());
             
             self.advance();
             self.current.clone()
@@ -218,21 +265,21 @@ where
     }
 
     fn parse_let_statement(&mut self) -> Option<Spanned<Statement>> {
-        println!("Parsing let statement");
+        debug!("Parsing let statement");
         let is_constant = self.peek_is(KeywordKind::Const);
         if is_constant {
             self.advance();
         }
-        dbg!(is_constant);
+        debug!("{}", is_constant);
 
         let ident = self.expect_peek_identifier()?;
-        dbg!(&ident);
+        debug!("{}", &ident);
 
         self.expect_peek(OperatorKind::Assign)?;        
         self.advance();
 
         let expr = self.parse_expression(Precedence::Lowest)?;
-        dbg!(&expr);
+        debug!("{}", &expr);
 
         self.consume_until_statement_end();
 
@@ -300,7 +347,7 @@ where
     // Expressions
     fn parse_prefix(&mut self) -> Option<Spanned<Expression>> {
         let tok = self.current.as_ref()?;
-        dbg!(tok);
+        trace!("{}", tok);
         
         match tok.kind() {
             TokenKind::Identifier { .. } => self.parse_identifier(),
@@ -338,14 +385,14 @@ where
     fn parse_expression(&mut self, precedence: Precedence) -> Option<Spanned<Expression>> {
         let left = self.parse_prefix();
         
-        println!("Starting to parse expression");
+        debug!("Starting to parse expression");
         while self.peek.as_ref().is_some_and(|t| !t.is_eof()) {
             if self.peek_is(SymbolKind::Semicolon) {break;}
             
             self.advance();
         }
-        println!("Finished parsing expression");
-        dbg!(&left);
+        debug!("Finished parsing expression");
+        debug!("{:?}", &left);
         
         left
     }
@@ -362,7 +409,7 @@ where
 
         while self.peek.is_some() {
             let tok = self.current.as_ref().unwrap();
-            println!("Encountered token: {} {}", tok.name(), tok.path());
+            trace!("Encountered token: {} {}", tok.name(), tok.path());
 
             let statement = if *tok == KeywordKind::Let {
                 self.parse_let_statement()

@@ -2,6 +2,8 @@ use crate::tokens::{
     KeywordKind, LiteralKind, OperatorKind, Span, Sym, SymbolKind, Token, TokenKind, interner,
 };
 use std::borrow::Cow;
+use tracing::{trace, debug, info, warn, error};
+
 
 const TAB_WIDTH: u32 = 4;
 
@@ -724,7 +726,7 @@ fn can_do_symbols() {
             input_str
         );
 
-        dbg!(&token);
+        trace!("{}", &token);
 
         assert!(token.unwrap() == expected_output);
     }

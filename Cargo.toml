@@ -9,3 +9,5 @@ clap = "4.5.40"
 textwrap = "0.16.2"
 colored = "3.0.0"
 ordered-float = "5.0.0"
+tracing = "0.1.43"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"]}
