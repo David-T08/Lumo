@@ -2,8 +2,7 @@ use crate::tokens::{
     KeywordKind, LiteralKind, OperatorKind, Span, Sym, SymbolKind, Token, TokenKind, interner,
 };
 use std::borrow::Cow;
-use tracing::{trace, debug, info, warn, error};
-
+use tracing::{debug, trace, warn, instrument};
 
 const TAB_WIDTH: u32 = 4;
 
@@ -26,7 +25,7 @@ pub struct Lexer<'a> {
     // Source file we're lexing
     file: Sym,
     stream: &'a Vec<u8>,
-    
+
     finished: bool,
 
     // Human positions
@@ -44,7 +43,7 @@ impl<'a> Lexer<'a> {
         Lexer {
             file: guard.get_or_intern(file_path),
             stream: data,
-            
+
             finished: false,
 
             lineno: 1,
@@ -55,21 +54,28 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     pub fn next_token(&mut self) -> Option<Token> {
         if self.finished {
+            debug!("lexer finished");
             return None;
         }
-        
+
         if self.position >= self.stream.len() {
+            debug!("lexer reached eof");
             self.finished = true;
-            
-            return Some(Token::new(self.file, Span {
-                start: self.position,
-                end: self.position,
-                
-                line: self.lineno,
-                col: self.columnno
-            }, TokenKind::Eof))
+
+            return Some(Token::new(
+                self.file,
+                Span {
+                    start: self.position,
+                    end: self.position,
+
+                    line: self.lineno,
+                    col: self.columnno,
+                },
+                TokenKind::Eof,
+            ));
         }
 
         self.skip_whitespace();
@@ -88,6 +94,7 @@ impl<'a> Lexer<'a> {
         };
 
         if let Some(symbol) = self.match_symbol() {
+            trace!("encountered symbol `{}`", symbol);
             let len = match symbol {
                 SymbolKind::Arrow => 2,
                 SymbolKind::FatArrow => 2,
@@ -99,7 +106,8 @@ impl<'a> Lexer<'a> {
             self.position += len;
             self.columnno += len as u32;
             self.read_position += len;
-
+            
+            trace!("advanced by {len}");
             span.end = self.position;
 
             return Some(Token::new(
@@ -108,7 +116,9 @@ impl<'a> Lexer<'a> {
                 TokenKind::Symbol { kind: symbol },
             ));
         } else if matches!(current_char, b'"' | b'\'') {
+            trace!("encountered a quote");
             let read = self.read_string();
+            trace!("finished reading string");
             span.end = self.position;
 
             let mut guard = interner().write().unwrap();
@@ -123,15 +133,19 @@ impl<'a> Lexer<'a> {
         } else if is_operator(current_char) {
             // Operators
             let (kind, len) = self.match_operator();
+            trace!("encountered operator `{kind}");
 
             self.position += len;
             self.columnno += len as u32;
             self.read_position += len;
+            
+            trace!("advanced by {len}");
 
             span.end = self.position;
 
             return Some(Token::new(self.file, span, TokenKind::Operator { kind }));
         } else if matches!(current_char, b'A'..=b'Z' | b'a'..=b'z' | b'_') {
+            trace!("encountered alphabetical character (ident/keyword)");
             // Identifiers and keywords
             while self.read_position < self.stream.len()
                 && matches!(self.stream[self.position], b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'0'..=b'9')
@@ -153,10 +167,13 @@ impl<'a> Lexer<'a> {
                     );
                 }
             };
+            
+            trace!("read => {read}");
 
             span.end = self.position;
 
             if let Some(kind) = self.match_keyword(read) {
+                trace!("matched a keyword `{kind}");
                 return Some(Token::new(self.file, span, TokenKind::Keyword { kind }));
             } else {
                 let mut guard = interner().write().unwrap();
@@ -170,10 +187,18 @@ impl<'a> Lexer<'a> {
                 ));
             }
         } else if matches!(current_char, b'0'..b'9') {
+            trace!("encountered a numeric char");
             let mut radix = 10;
             if current_char == b'0'
                 && let Some(peek) = self.peek_char()
             {
+                trace!("has {} ({}) after", peek, match peek.to_ascii_lowercase() {
+                    b'b' => "binary",
+                    b'o' => "octal",
+                    b'x' => "hex",
+                    _ => "base-10"
+                });
+                
                 radix = match peek.to_ascii_lowercase() {
                     b'b' => 2,
                     b'o' => 8,
@@ -205,11 +230,6 @@ impl<'a> Lexer<'a> {
                 }
             }
 
-            if self.read_position >= self.stream.len() {
-                self.position += 1;
-                self.read_position += 1;
-            }
-
             let read = match std::str::from_utf8(&self.stream[start_pos..self.position]) {
                 Ok(val) => val,
                 Err(_) => {
@@ -219,6 +239,8 @@ impl<'a> Lexer<'a> {
                     );
                 }
             };
+            
+            trace!("read => {read}");
 
             span.end = self.position;
             if let Some(parsed) = self.parse_integer_literal(&read) {
@@ -238,6 +260,7 @@ impl<'a> Lexer<'a> {
         return Some(Token::new(self.file, span, TokenKind::Unknown));
     }
 
+    #[instrument(skip(self))]
     fn match_operator(&self) -> (OperatorKind, usize) {
         let current_char = self.stream[self.position];
         let peek_char = self.peek_char().unwrap_or(0);
@@ -297,6 +320,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     fn match_symbol(&self) -> Option<SymbolKind> {
         let current_char = self.stream[self.position];
         let peek_char = self.peek_char().unwrap_or(0);
@@ -321,6 +345,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     fn match_keyword(&self, read: &str) -> Option<KeywordKind> {
         return match read {
             "true" => Some(KeywordKind::True),
@@ -344,6 +369,7 @@ impl<'a> Lexer<'a> {
         };
     }
 
+    #[instrument(skip(self))]
     fn skip_whitespace(&mut self) {
         while self.position < self.stream.len() {
             let current_char = self.stream[self.position] as char;
@@ -354,6 +380,7 @@ impl<'a> Lexer<'a> {
 
             match current_char {
                 '\n' => {
+                    trace!("skipping newline");
                     self.lineno += 1;
                     self.columnno = 1;
 
@@ -362,6 +389,7 @@ impl<'a> Lexer<'a> {
                 }
                 '\r' => {
                     // Handle CRLF
+                    trace!("skipping \\r");
                     if self.peek_char() == Some(b'\n') {
                         self.position = self.read_position + 1;
                         self.read_position += 2;
@@ -373,12 +401,14 @@ impl<'a> Lexer<'a> {
                     self.columnno = 1;
                 }
                 '\t' => {
+                    trace!("skipping tab");
                     let spaces_to_next_tab_stop = TAB_WIDTH - (self.columnno - 1 % TAB_WIDTH);
                     self.columnno += spaces_to_next_tab_stop;
                     self.position = self.read_position;
                     self.read_position += 1;
                 }
                 _ => {
+                    trace!("skipping generic whitespace");
                     self.columnno += 1;
                     self.position = self.read_position;
                     self.read_position += 1;
@@ -387,6 +417,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     fn parse_integer_literal(&self, s: &str) -> Option<i64> {
         let s = if s.contains('_') {
             Cow::Owned(s.replace('_', ""))
@@ -406,8 +437,11 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[instrument(skip(self))]
     fn read_string(&mut self) -> Cow<'a, str> {
         let starting_quote = self.stream[self.position];
+        trace!("starting_quote => {}", starting_quote as char);
+        
         self.next_char();
 
         let str_start = self.position;
@@ -422,10 +456,12 @@ impl<'a> Lexer<'a> {
             let char_byte = self.stream[self.position];
 
             if char_byte == b'\\' {
+                trace!("preprocess: encountered escape");
                 if self.position + 1 < self.stream.len() {
                     let next_byte = self.stream[self.position + 1];
 
                     if next_byte == b'"' || next_byte == b'\'' {
+                        trace!("preprocess: is a {}", next_byte as char);
                         has_escapes = true;
                     }
 
@@ -437,6 +473,7 @@ impl<'a> Lexer<'a> {
                     self.next_char();
                 }
             } else if char_byte == starting_quote {
+                trace!("preprocess: hit initial quote ({})", starting_quote as char);
                 break;
             } else {
                 self.next_char();
@@ -483,20 +520,20 @@ impl<'a> Lexer<'a> {
 }
 
 impl<'a> Lexer<'a> {
+    #[instrument(skip(self))]
     fn next_char(&mut self) -> Option<u8> {
-        if self.read_position >= self.stream.len() {
-            return None;
-        }
-
-        let c = self.stream[self.read_position];
         self.position = self.read_position;
-        self.read_position += 1;
-
+        self.read_position = self.position + 1;
         self.columnno += 1;
-
-        Some(c)
+    
+        if self.position >= self.stream.len() {
+            None
+        } else {
+            Some(self.stream[self.position])
+        }
     }
 
+    #[instrument(skip(self))]
     fn peek_char(&self) -> Option<u8> {
         if self.read_position >= self.stream.len() {
             return None;
@@ -505,6 +542,7 @@ impl<'a> Lexer<'a> {
         return Some(self.stream[self.read_position]);
     }
 
+    #[instrument(skip(self))]
     fn peek_nth_char(&self, n: usize) -> Option<u8> {
         if self.position + n >= self.stream.len() {
             return None;
@@ -726,7 +764,7 @@ fn can_do_symbols() {
             input_str
         );
 
-        trace!("{}", &token);
+        trace!("{:?}", &token);
 
         assert!(token.unwrap() == expected_output);
     }

@@ -1,10 +1,7 @@
-use crate::{
-    ast::{Ident, Identifier},
-    auto_display_enum,
-};
+use crate::auto_display_enum;
+
 use ordered_float::OrderedFloat;
 use std::{
-    borrow::Cow,
     fmt::{Display, Formatter},
     sync::{OnceLock, RwLock},
 };
@@ -35,6 +32,23 @@ impl Display for Span {
 impl Span {
     pub fn new(start: usize, end: usize, line: u32, col: u32) -> Self {
         Self {
+            start,
+            end,
+            line,
+            col,
+        }
+    }
+
+    pub fn join(self, other: &Span) -> Span {
+        let (start, line, col) =
+            if (self.start, self.line, self.col) <= (other.start, other.line, other.col) {
+                (self.start, self.line, self.col)
+            } else {
+                (other.start, other.line, other.col)
+            };
+
+        let end = self.end.max(other.end);
+        Span {
             start,
             end,
             line,
@@ -84,7 +98,7 @@ impl Token {
 
     pub fn path(&self) -> String {
         let guard = interner().read().unwrap();
-        
+
         format!(
             "({} @ {})",
             guard.resolve(self.file).unwrap_or(""),

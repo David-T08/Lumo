@@ -4,18 +4,14 @@ mod macros;
 mod parser;
 mod tokens;
 
-use std::{
-    io::{self, Write},
-};
+use std::io::{self, Write};
 
 use tracing_subscriber::{
-    fmt::{
-        format::Writer,
-        time::FormatTime
-    }, EnvFilter
+    EnvFilter,
+    fmt::{format::Writer, time::FormatTime},
 };
 
-use tracing::{trace, debug, info, warn, error};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{lexer::Lexer, parser::Parser};
 
@@ -34,20 +30,21 @@ impl FormatTime for RelTime {
         let total_ms = elapsed.as_millis() as u128;
         let minutes = (total_ms / 60_000) % 100; // wrap after 99 if you want
         let seconds = (total_ms / 1_000) % 60;
-        let millis  = total_ms % 1_000;
+        let millis = total_ms % 1_000;
 
         write!(w, "{:02}:{:02}.{:03}", minutes, seconds, millis)
     }
 }
 
 fn main() {
-    // let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
-
     tracing_subscriber::fmt()
         .with_timer(RelTime)
         .with_env_filter(EnvFilter::from_default_env())
-        .with_target(true)
+        .with_target(false)
         .with_level(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::ENTER)
         .init();
 
     info!("Lumo 0.1.0 RLPL");
@@ -71,21 +68,26 @@ fn main() {
         let command: Vec<u8> = command.as_bytes().into();
 
         let lexer = Lexer::new("cli", &command);
-        
-        info!("\n== Lexing ==");
+
+        info!("== Lexing ==");
         for tok in Lexer::new("cli", &command) {
-            info!("{tok}");
+            info!("{tok}\n");
         }
 
-        info!("\n== Parsing ==");
+        info!("== Parsing ==");
         let mut parser = Parser::new(lexer);
         let program = parser.parse_program();
 
-        debug!("program =\n{:#?}", program);
+        debug!("\n{:#?}", program);
 
-        info!("== Errors ==");
-        for e in program.errors {
-            error!("{e}");
+        if program.errors.len() > 0 {
+            info!("== Errors ==");
+            for e in program.errors {
+                error!("{e}");
+            }
         }
+
+        println!();
+        println!();
     }
 }
