@@ -2,23 +2,12 @@ use std::fmt::{Display, Formatter};
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::{
-    ast::{self, BlockStatement, Expression, Identifier, Literal, Spanned, Statement},
+    ast::{self, BlockStatement, Expression, Spanned, Statement},
     tokens::{
-        KeywordKind, LiteralKind, OperatorKind, Span, SymbolKind, Token, TokenKind, interner,
+        KeywordKind, LiteralKind, OperatorKind, Precedence, Span, SymbolKind, Token, TokenKind,
+        interner,
     },
 };
-
-#[derive(Debug)]
-enum Precedence {
-    Lowest,
-    Equals,
-    LessGreater,
-    Sum,
-    Product,
-    Prefix,
-    Call,
-    Index,
-}
 
 #[derive(Debug, Clone)]
 pub enum ParserError {
@@ -398,19 +387,30 @@ where
     }
 
     #[instrument(skip(self))]
-    fn parse_literal(&mut self) -> Option<Spanned<Expression>> {
-        let current = self.current.as_ref()?;
-        let TokenKind::Literal { kind } = current.kind() else {
-            return None;
+    fn parse_infix(&mut self, left: Spanned<Expression>) -> Option<Spanned<Expression>> {
+        let start_span = left.span().clone();
+
+        let (kind, op_span) = {
+            let op_tok = self.current.as_ref()?;
+            match op_tok.kind() {
+                TokenKind::Operator { kind } => (*kind, op_tok.span().clone()),
+                _ => return None,
+            }
         };
 
-        let expr = match kind {
-            LiteralKind::Integer(i) => Expression::IntegerLiteral(ast::Literal { value: *i }),
-            LiteralKind::String(sym) => Expression::StringLiteral(ast::Literal { value: *sym }),
-            LiteralKind::Float(_f) => todo!(),
-        };
-        
-        Some(Spanned::new(expr, current.span().clone()))
+        let prec = kind.precedence();
+        let right = self.parse_expression(prec)?;
+
+        let end_span = start_span.join(right.span());
+
+        Some(Spanned::new(
+            Expression::Binary(ast::BinaryExpression {
+                left: Box::new(left),
+                op: Spanned::new(kind.clone(), op_span),
+                right: Box::new(right),
+            }),
+            end_span,
+        ))
     }
 
     #[instrument(skip(self))]
@@ -428,6 +428,22 @@ where
         debug!("Finished parsing expression => {:#?}", &left);
 
         left
+    }
+
+    #[instrument(skip(self))]
+    fn parse_literal(&mut self) -> Option<Spanned<Expression>> {
+        let current = self.current.as_ref()?;
+        let TokenKind::Literal { kind } = current.kind() else {
+            return None;
+        };
+
+        let expr = match kind {
+            LiteralKind::Integer(i) => Expression::IntegerLiteral(ast::Literal { value: *i }),
+            LiteralKind::String(sym) => Expression::StringLiteral(ast::Literal { value: *sym }),
+            LiteralKind::Float(_f) => todo!(),
+        };
+
+        Some(Spanned::new(expr, current.span().clone()))
     }
 
     #[instrument(skip(self))]

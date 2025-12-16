@@ -2,7 +2,7 @@ use crate::tokens::{
     KeywordKind, LiteralKind, OperatorKind, Span, Sym, SymbolKind, Token, TokenKind, interner,
 };
 use std::borrow::Cow;
-use tracing::{debug, trace, warn, instrument};
+use tracing::{debug, instrument, trace, warn};
 
 const TAB_WIDTH: u32 = 4;
 
@@ -106,7 +106,7 @@ impl<'a> Lexer<'a> {
             self.position += len;
             self.columnno += len as u32;
             self.read_position += len;
-            
+
             trace!("advanced by {len}");
             span.end = self.position;
 
@@ -138,7 +138,7 @@ impl<'a> Lexer<'a> {
             self.position += len;
             self.columnno += len as u32;
             self.read_position += len;
-            
+
             trace!("advanced by {len}");
 
             span.end = self.position;
@@ -167,7 +167,7 @@ impl<'a> Lexer<'a> {
                     );
                 }
             };
-            
+
             trace!("read => {read}");
 
             span.end = self.position;
@@ -192,13 +192,17 @@ impl<'a> Lexer<'a> {
             if current_char == b'0'
                 && let Some(peek) = self.peek_char()
             {
-                trace!("has {} ({}) after", peek, match peek.to_ascii_lowercase() {
-                    b'b' => "binary",
-                    b'o' => "octal",
-                    b'x' => "hex",
-                    _ => "base-10"
-                });
-                
+                trace!(
+                    "has {} ({}) after",
+                    peek,
+                    match peek.to_ascii_lowercase() {
+                        b'b' => "binary",
+                        b'o' => "octal",
+                        b'x' => "hex",
+                        _ => "base-10",
+                    }
+                );
+
                 radix = match peek.to_ascii_lowercase() {
                     b'b' => 2,
                     b'o' => 8,
@@ -239,7 +243,7 @@ impl<'a> Lexer<'a> {
                     );
                 }
             };
-            
+
             trace!("read => {read}");
 
             span.end = self.position;
@@ -441,7 +445,7 @@ impl<'a> Lexer<'a> {
     fn read_string(&mut self) -> Cow<'a, str> {
         let starting_quote = self.stream[self.position];
         trace!("starting_quote => {}", starting_quote as char);
-        
+
         self.next_char();
 
         let str_start = self.position;
@@ -525,7 +529,7 @@ impl<'a> Lexer<'a> {
         self.position = self.read_position;
         self.read_position = self.position + 1;
         self.columnno += 1;
-    
+
         if self.position >= self.stream.len() {
             None
         } else {

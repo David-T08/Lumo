@@ -14,6 +14,23 @@ pub fn interner() -> &'static RwLock<StringInterner<DefaultBackend>> {
 
 pub type Sym = DefaultSymbol;
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Precedence {
+    Lowest,
+    LogicalOr,
+    LogicalAnd,
+    Equality,
+    Comparison,
+    BitOr,
+    BitXor,
+    BitAnd,
+    Shift,
+    Sum,
+    Product,
+    Prefix,
+    Postfix,
+}
+
 #[derive(Debug, Clone)]
 pub struct Span {
     pub start: usize, // Inclusive byte offset in source
@@ -279,9 +296,38 @@ auto_display_enum! {
     }
 }
 
-type O = OperatorKind;
 impl OperatorKind {
+    pub fn precedence(&self) -> Precedence {
+        use OperatorKind as O;
+        use Precedence::*;
+
+        match self {
+            O::CompOr => LogicalOr,
+            O::CompAnd => LogicalAnd,
+
+            O::Equal | O::NotEqual => Equality,
+            O::LessThan | O::LessThanEqual | O::GreaterThan | O::GreaterThanEqual => Comparison,
+
+            O::BitOr => BitOr,
+            O::BitXor => BitXor,
+            O::BitAnd => BitAnd,
+
+            O::LeftShift | O::RightShift => Shift,
+
+            O::Add | O::Subtract => Sum,
+            O::Multiply | O::Divide | O::Modulo => Product,
+
+            O::Bang | O::BitNot => Prefix,
+
+            // Parser must decide, they're both postfix and prefix
+            O::Increment | O::Decrement => Prefix,
+
+            _ => Lowest,
+        }
+    }
+
     pub fn is_math(&self) -> bool {
+        use OperatorKind as O;
         matches!(
             self,
             O::Add | O::Subtract | O::Multiply | O::Divide | O::Modulo
@@ -289,6 +335,7 @@ impl OperatorKind {
     }
 
     pub fn is_assignment(&self) -> bool {
+        use OperatorKind as O;
         matches!(
             self,
             O::AddAssign
@@ -304,18 +351,25 @@ impl OperatorKind {
         )
     }
 
-    pub fn is_binary(&self) -> bool {
+    pub fn is_bitwise_infix(&self) -> bool {
+        use OperatorKind as O;
         matches!(
             self,
-            O::LeftShift | O::RightShift | O::BitOr | O::BitXor | O::BitAnd | O::BitNot
+            O::LeftShift | O::RightShift | O::BitOr | O::BitXor | O::BitAnd
         )
     }
 
-    pub fn is_binary_infix(&self) -> bool {
-        self.is_comparison() || self.is_math() || (!matches!(self, O::BitNot) && self.is_binary())
+    pub fn is_infix(&self) -> bool {
+        use OperatorKind as O;
+        self.is_comparison()
+            || self.is_math()
+            || self.is_bitwise_infix()
+            || self.is_logical_infix()
+            || matches!(self, O::Assign)
     }
 
     pub fn is_comparison(&self) -> bool {
+        use OperatorKind as O;
         matches!(
             self,
             O::Equal
@@ -324,12 +378,16 @@ impl OperatorKind {
                 | O::LessThanEqual
                 | O::GreaterThan
                 | O::GreaterThanEqual
-                | O::CompAnd
-                | O::CompOr
         )
     }
 
+    pub fn is_logical_infix(&self) -> bool {
+        use OperatorKind as O;
+        matches!(self, O::CompAnd | O::CompOr)
+    }
+
     pub fn is_prefix(&self) -> bool {
+        use OperatorKind as O;
         matches!(
             self,
             O::Increment | O::Decrement | O::Subtract | O::Bang | O::BitNot
@@ -337,6 +395,7 @@ impl OperatorKind {
     }
 
     pub fn is_postfix(&self) -> bool {
+        use OperatorKind as O;
         matches!(self, O::Increment | O::Decrement)
     }
 }
