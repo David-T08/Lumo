@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter};
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
     ast::{self, BlockStatement, Expression, Spanned, Statement},
@@ -14,6 +14,9 @@ pub enum ParserError {
     IncorrectToken {
         encountered: Option<Token>,
         expected: ExpectedToken,
+    },
+    InvalidPrefixFn {
+        encountered: Token
     },
 }
 
@@ -37,6 +40,12 @@ impl Display for ParserError {
 
                 write!(f, "hi")
             }
+
+            ParserError::InvalidPrefixFn {encountered} => writeln!(
+                f, 
+                "Invalid Prefix function for {}", 
+                encountered.name()
+            ),
         }
     }
 }
@@ -149,6 +158,14 @@ where
                 encountered: self.peek.clone(),
                 expected: kind.into(),
             });
+            None
+        }
+    }
+
+    fn peek_precedence(&self) -> Option<Precedence> {
+        if let TokenKind::Operator { kind } = self.peek.as_ref()?.kind() {
+            Some(kind.precedence())
+        } else {
             None
         }
     }
@@ -309,14 +326,15 @@ where
         let start_span = self.current.as_ref()?.span().clone();
         self.advance();
 
-        let value = match self.parse_expression(Precedence::Lowest) {
-            Some(v) => v,
-            None => return None,
-        };
-
+        let value = self.parse_expression(Precedence::Lowest);
         self.consume_until_statement_end();
 
-        let end_span = start_span.join(value.span());
+        let end_span = if let Some(value) = &value {
+            start_span.join(value.span())
+        } else {
+            start_span
+        };
+
         Some(Spanned::new(
             Statement::Return(ast::ReturnStatement { value }),
             end_span,
@@ -330,10 +348,7 @@ where
 
     #[instrument(skip(self))]
     fn parse_expression_statement(&mut self) -> Option<Spanned<Statement>> {
-        let expr = match self.parse_expression(Precedence::Lowest) {
-            Some(e) => e,
-            None => return None,
-        };
+        let expr = self.parse_expression(Precedence::Lowest)?;
 
         if self.peek_is(SymbolKind::Semicolon) {
             self.advance();
@@ -357,7 +372,7 @@ where
 
         match tok.kind() {
             TokenKind::Identifier { .. } => self.parse_identifier(),
-            TokenKind::Literal { kind } => self.parse_literal(),
+            TokenKind::Literal { .. } => self.parse_literal(),
             TokenKind::Keyword { kind } => match *kind {
                 KeywordKind::True | KeywordKind::False => Some(Spanned::new(
                     Expression::BooleanLiteral(matches!(kind, KeywordKind::True).into()),
@@ -387,47 +402,76 @@ where
     }
 
     #[instrument(skip(self))]
-    fn parse_infix(&mut self, left: Spanned<Expression>) -> Option<Spanned<Expression>> {
-        let start_span = left.span().clone();
-
-        let (kind, op_span) = {
-            let op_tok = self.current.as_ref()?;
-            match op_tok.kind() {
-                TokenKind::Operator { kind } => (*kind, op_tok.span().clone()),
-                _ => return None,
-            }
+    fn parse_infix(&mut self, left: Spanned<Expression>) -> Spanned<Expression> {
+        debug!("operator = {}", self.current.as_ref().unwrap().name());
+        
+        let op = self.current.as_ref().unwrap();
+        
+        if *op == SymbolKind::ParenOpen {
+            return self.parse_call_expression();
+        } else if *op == SymbolKind::BracketOpen {
+            return self.parse_index_expression().unwrap();
+        }
+        
+        let (prec, op_kind, op_span) = match self.current.as_ref().unwrap().kind() {
+            TokenKind::Operator { kind } => (kind.precedence(), kind.clone(), op.span().clone()),
+            _ => return left,
         };
 
-        let prec = kind.precedence();
-        let right = self.parse_expression(prec)?;
+        self.advance();
+        let Some(right) = self.parse_expression(prec) else {
+            return left;
+        };
 
-        let end_span = start_span.join(right.span());
+        let end_span = left.span().join(right.span());
 
-        Some(Spanned::new(
+        Spanned::new(
             Expression::Binary(ast::BinaryExpression {
                 left: Box::new(left),
-                op: Spanned::new(kind.clone(), op_span),
+                op: Spanned::new(op_kind, op_span),
                 right: Box::new(right),
             }),
             end_span,
-        ))
+        )
     }
 
     #[instrument(skip(self))]
     fn parse_expression(&mut self, precedence: Precedence) -> Option<Spanned<Expression>> {
         debug!("Start parsing: {}", self.current.as_ref()?.name());
-        let left = self.parse_prefix();
+        let mut left = match self.parse_prefix() {
+            Some(expr) => expr,
+            None => {
+                self.errors.push(ParserError::InvalidPrefixFn { encountered: self.current.as_ref()?.clone()});
+                return None;
+            }
+        };
 
-        while self.peek.as_ref().is_some_and(|t| !t.is_eof()) {
-            if self.peek_is(SymbolKind::Semicolon) {
+        loop {
+            let peek = self.peek.as_ref()?;
+            if peek.is_eof() || *peek == SymbolKind::Semicolon {
                 break;
             }
-
+            
+            if precedence > self.peek_precedence().unwrap_or(Precedence::Lowest) {
+                break;
+            }
+            
             self.advance();
+            left = self.parse_infix(left)
         }
         debug!("Finished parsing expression => {:#?}", &left);
 
-        left
+        Some(left)
+    }
+    
+    #[instrument(skip(self))]
+    fn parse_call_expression(&mut self) -> Spanned<Expression> {
+        todo!();
+    }
+    
+    #[instrument(skip(self))]
+    fn parse_index_expression(&mut self) -> Option<Spanned<Expression>> {
+        todo!();
     }
 
     #[instrument(skip(self))]
@@ -437,9 +481,9 @@ where
             return None;
         };
 
-        let expr = match kind {
-            LiteralKind::Integer(i) => Expression::IntegerLiteral(ast::Literal { value: *i }),
-            LiteralKind::String(sym) => Expression::StringLiteral(ast::Literal { value: *sym }),
+        let expr = match *kind {
+            LiteralKind::Integer(i) => Expression::IntegerLiteral(ast::Literal { value: i }),
+            LiteralKind::String(sym) => Expression::StringLiteral(ast::Literal { value: sym }),
             LiteralKind::Float(_f) => todo!(),
         };
 

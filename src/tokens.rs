@@ -29,9 +29,11 @@ pub enum Precedence {
     Product,
     Prefix,
     Postfix,
+    Call,
+    Index
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Span {
     pub start: usize, // Inclusive byte offset in source
     pub end: usize,   // Inclusive end byte offset
@@ -110,6 +112,15 @@ impl Token {
             TokenKind::Literal { kind } => kind.name().into(),
             TokenKind::Unknown => "INVALID".into(),
             TokenKind::Eof => "EOF".into(),
+        }
+    }
+    
+    pub fn precedence(&self) -> Option<Precedence> {
+        match self.kind {
+            TokenKind::Operator { kind } => Some(kind.precedence()),
+            TokenKind::Symbol { kind } => kind.precedence(),
+            
+            _ => None
         }
     }
 
@@ -442,6 +453,17 @@ auto_display_enum! {
         BraceClose => "}",
         BracketOpen => "[",
         BracketClose => "]",
+    }
+}
+
+impl SymbolKind {
+    pub fn precedence(&self) -> Option<Precedence> {
+        match *self {
+            SymbolKind::ParenOpen => Some(Precedence::Call),
+            SymbolKind::BracketOpen => Some(Precedence::Index),
+            
+            _ => None
+        }
     }
 }
 

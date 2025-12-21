@@ -100,7 +100,7 @@ pub struct ExpressionStatement {
 
 #[derive(Debug)]
 pub struct ReturnStatement {
-    pub value: Expr,
+    pub value: Option<Expr>,
 }
 
 #[derive(Debug)]
