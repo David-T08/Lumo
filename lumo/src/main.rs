@@ -13,7 +13,11 @@ use tracing_subscriber::{
 
 use tracing::{debug, error, info, trace, warn};
 
-use crate::{lexer::Lexer, parser::Parser};
+use crate::{
+    ast::{AstFormatConfig, AstFormatExt},
+    lexer::Lexer,
+    parser::Parser,
+};
 
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -75,10 +79,14 @@ fn main() {
         }
 
         info!("== Parsing ==");
+
         let mut parser = Parser::new(lexer);
         let program = parser.parse_program();
 
-        debug!("\n{:#?}", program);
+        info!(
+            "Parser output:\n{}",
+            program.with_cfg(AstFormatConfig::default())
+        );
 
         if program.errors.len() > 0 {
             info!("== Errors ==");

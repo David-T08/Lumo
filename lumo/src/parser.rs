@@ -16,7 +16,7 @@ pub enum ParserError {
         expected: ExpectedToken,
     },
     InvalidPrefixFn {
-        encountered: Token
+        encountered: Token,
     },
 }
 
@@ -41,11 +41,9 @@ impl Display for ParserError {
                 write!(f, "hi")
             }
 
-            ParserError::InvalidPrefixFn {encountered} => writeln!(
-                f, 
-                "Invalid Prefix function for {}", 
-                encountered.name()
-            ),
+            ParserError::InvalidPrefixFn { encountered } => {
+                writeln!(f, "Invalid Prefix function for {}", encountered.name())
+            }
         }
     }
 }
@@ -343,20 +341,25 @@ where
 
     #[instrument(skip(self))]
     fn parse_assignment_statement(&mut self) -> Option<Spanned<Statement>> {
+        let op = self.peek.as_ref().unwrap().as_operator().unwrap();
+        info!("ENCOUNTERED A {}", self.peek.as_ref().unwrap().name());
         todo!();
     }
 
     #[instrument(skip(self))]
     fn parse_expression_statement(&mut self) -> Option<Spanned<Statement>> {
+        let start_span = self.current.as_ref()?.span().clone();
         let expr = self.parse_expression(Precedence::Lowest)?;
 
         if self.peek_is(SymbolKind::Semicolon) {
             self.advance();
         }
 
+        let end_span = start_span.join(&expr.span);
+
         Some(Spanned::new(
             Statement::Expression(ast::ExpressionStatement { expr }),
-            Span::new(0, 0, 0, 0),
+            end_span,
         ))
     }
 
@@ -392,8 +395,10 @@ where
                 _ => None,
             },
             TokenKind::Operator { kind } => match *kind {
-                OperatorKind::Bang => todo!(),
-                OperatorKind::Subtract => todo!(),
+                OperatorKind::Bang 
+                    | OperatorKind::Subtract 
+                    | OperatorKind::Decrement 
+                    | OperatorKind::Increment => self.parse_prefix_op(*kind, tok.span().clone()),
 
                 _ => None,
             },
@@ -401,18 +406,18 @@ where
         }
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, left))]
     fn parse_infix(&mut self, left: Spanned<Expression>) -> Spanned<Expression> {
         debug!("operator = {}", self.current.as_ref().unwrap().name());
-        
+
         let op = self.current.as_ref().unwrap();
-        
+
         if *op == SymbolKind::ParenOpen {
             return self.parse_call_expression();
         } else if *op == SymbolKind::BracketOpen {
             return self.parse_index_expression().unwrap();
         }
-        
+
         let (prec, op_kind, op_span) = match self.current.as_ref().unwrap().kind() {
             TokenKind::Operator { kind } => (kind.precedence(), kind.clone(), op.span().clone()),
             _ => return left,
@@ -441,7 +446,9 @@ where
         let mut left = match self.parse_prefix() {
             Some(expr) => expr,
             None => {
-                self.errors.push(ParserError::InvalidPrefixFn { encountered: self.current.as_ref()?.clone()});
+                self.errors.push(ParserError::InvalidPrefixFn {
+                    encountered: self.current.as_ref()?.clone(),
+                });
                 return None;
             }
         };
@@ -451,11 +458,11 @@ where
             if peek.is_eof() || *peek == SymbolKind::Semicolon {
                 break;
             }
-            
-            if precedence > self.peek_precedence().unwrap_or(Precedence::Lowest) {
+
+            if precedence >= self.peek_precedence().unwrap_or(Precedence::Lowest) {
                 break;
             }
-            
+
             self.advance();
             left = self.parse_infix(left)
         }
@@ -464,11 +471,26 @@ where
         Some(left)
     }
     
+    fn parse_prefix_op(&mut self, op: OperatorKind, op_span: Span) -> Option<Spanned<Expression>> {
+        self.advance();
+        
+        let right = self.parse_expression(Precedence::Prefix)?;
+        let end_span = op_span.join(&right.span);
+    
+        Some(Spanned::new(
+            Expression::Prefix(ast::PrefixExpression {
+                op: Spanned::new(op, op_span),
+                right: Box::new(right),
+            }),
+            end_span,
+        ))
+    }
+
     #[instrument(skip(self))]
     fn parse_call_expression(&mut self) -> Spanned<Expression> {
         todo!();
     }
-    
+
     #[instrument(skip(self))]
     fn parse_index_expression(&mut self) -> Option<Spanned<Expression>> {
         todo!();
@@ -544,7 +566,11 @@ where
             } else if *tok == KeywordKind::Return {
                 self.parse_return_statement()
             } else {
-                if self.peek_is(OperatorKind::Assign) {
+                info!("{}", self.peek.as_ref().unwrap().name());
+                if let Some(peek) = self.peek.as_ref()
+                    && let Some(op) = peek.as_operator()
+                    && op.is_assignment()
+                {
                     self.parse_assignment_statement()
                 } else {
                     self.parse_expression_statement()

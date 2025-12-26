@@ -360,6 +360,7 @@ impl<'a> Lexer<'a> {
 
             "break" => Some(KeywordKind::Break),
             "return" => Some(KeywordKind::Return),
+            "continue" => Some(KeywordKind::Continue),
 
             "match" => Some(KeywordKind::Match),
             "function" => Some(KeywordKind::Function),
@@ -369,6 +370,7 @@ impl<'a> Lexer<'a> {
             "while" => Some(KeywordKind::While),
             "let" => Some(KeywordKind::Let),
             "const" => Some(KeywordKind::Const),
+
             _ => None,
         };
     }

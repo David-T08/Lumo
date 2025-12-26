@@ -1,4 +1,6 @@
-use crate::auto_display_enum;
+use crate::{ast::AstFormat, auto_display_enum};
+
+use lumo_macros::{AstFormatExt};
 
 use ordered_float::OrderedFloat;
 use std::{
@@ -30,7 +32,7 @@ pub enum Precedence {
     Prefix,
     Postfix,
     Call,
-    Index
+    Index,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,13 +116,13 @@ impl Token {
             TokenKind::Eof => "EOF".into(),
         }
     }
-    
+
     pub fn precedence(&self) -> Option<Precedence> {
         match self.kind {
             TokenKind::Operator { kind } => Some(kind.precedence()),
             TokenKind::Symbol { kind } => kind.precedence(),
-            
-            _ => None
+
+            _ => None,
         }
     }
 
@@ -164,6 +166,23 @@ impl Token {
 
     pub fn is_eof(&self) -> bool {
         matches!(self.kind, TokenKind::Eof)
+    }
+}
+
+#[allow(dead_code)]
+impl Token {
+    pub fn as_operator(&self) -> Option<OperatorKind> {
+        match self.kind {
+            TokenKind::Operator { kind } => Some(kind),
+            _ => None,
+        }
+    }
+
+    pub fn as_symbol(&self) -> Option<SymbolKind> {
+        match self.kind {
+            TokenKind::Symbol { kind } => Some(kind),
+            _ => None,
+        }
     }
 }
 
@@ -259,7 +278,7 @@ pub enum TokenKind {
 
 // OperatorKind
 auto_display_enum! {
-    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    #[derive(Debug, PartialEq, Eq, Clone, Copy, AstFormatExt)]
     #[allow(dead_code)]
     pub enum OperatorKind {
         // Math
@@ -359,6 +378,7 @@ impl OperatorKind {
                 | O::BitOrAssign
                 | O::BitXorAssign
                 | O::BitAndAssign
+                | O::Assign
         )
     }
 
@@ -372,11 +392,7 @@ impl OperatorKind {
 
     pub fn is_infix(&self) -> bool {
         use OperatorKind as O;
-        self.is_comparison()
-            || self.is_math()
-            || self.is_bitwise_infix()
-            || self.is_logical_infix()
-            || matches!(self, O::Assign)
+        self.is_comparison() || self.is_math() || self.is_bitwise_infix() || self.is_logical_infix()
     }
 
     pub fn is_comparison(&self) -> bool {
@@ -411,6 +427,20 @@ impl OperatorKind {
     }
 }
 
+impl AstFormat for OperatorKind {
+    fn fmt_with(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+        cfg: crate::ast::AstFormatConfig,
+    ) -> std::fmt::Result {
+        write!(f, "{self}")
+    }
+
+    fn node_name(&self) -> &'static str {
+        "Operator"
+    }
+}
+
 // KeywordKind
 auto_display_enum! {
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -425,13 +455,14 @@ auto_display_enum! {
         While => "while",
         Break => "break",
         Return => "return",
+        Continue => "continue",
 
         Match => "match",
         Function => "function",
 
-        Import => "import",
         Let => "let",
-        Const => "const"
+        Const => "const",
+        Import => "import",
     }
 }
 
@@ -461,8 +492,8 @@ impl SymbolKind {
         match *self {
             SymbolKind::ParenOpen => Some(Precedence::Call),
             SymbolKind::BracketOpen => Some(Precedence::Index),
-            
-            _ => None
+
+            _ => None,
         }
     }
 }
