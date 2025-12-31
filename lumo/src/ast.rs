@@ -267,14 +267,16 @@ impl AstFormat for Expression {
         match self {
             Expression::Binary(b) => b.fmt_with(f, cfg),
             Expression::Identifier(e) => e.fmt_with(f, cfg),
-            
+
             Expression::Prefix(e) => e.fmt_with(f, cfg),
             Expression::Postfix(e) => e.fmt_with(f, cfg),
-            
+
             Expression::IntegerLiteral(e) => e.fmt_with(f, cfg),
             Expression::BooleanLiteral(e) => e.fmt_with(f, cfg),
             Expression::StringLiteral(e) => e.fmt_with(f, cfg),
             Expression::FloatLiteral(e) => e.fmt_with(f, cfg),
+
+            Expression::Call(e) => e.fmt_with(f, cfg),
 
             _ => todo!(),
         }
@@ -336,7 +338,7 @@ impl LiteralKind for i64 {
     const NODE_NAME: &'static str = "Integer";
 }
 impl LiteralKind for SymbolU32 {
-    const NODE_NAME: &'static str = "SymbolU32";
+    const NODE_NAME: &'static str = "String";
 }
 
 #[derive(Debug, AstFormatExt)]
@@ -368,7 +370,12 @@ pub struct FunctionLiteral {
 
 impl AstFormat for FunctionLiteral {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
-        todo!();
+        write!(f, "Parameters:")?;
+        self.parameters.iter().for_each(|p| {
+            fmt_child(f, cfg, p);
+        });
+
+        fmt_child(f, cfg, &self.body)
     }
 
     fn node_name(&self) -> &'static str {
@@ -400,7 +407,7 @@ pub struct PrefixExpression {
 impl AstFormat for PrefixExpression {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
         let cfg = cfg.indent();
-        
+
         fmt_child(f, cfg, &self.op)?;
         fmt_child(f, cfg, &self.right)
     }
@@ -419,7 +426,7 @@ pub struct PostfixExpression {
 impl AstFormat for PostfixExpression {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
         let cfg = cfg.indent();
-        
+
         fmt_child(f, cfg, &self.left)?;
         fmt_child(f, cfg, &self.op)
     }
@@ -464,13 +471,26 @@ impl AstFormat for BinaryExpression {
 
 #[derive(Debug, AstFormatExt)]
 pub struct CallExpression {
-    pub function: Box<Expr>,
+    pub callee: Box<Expr>,
     pub arguments: Vec<Expr>,
 }
 
 impl AstFormat for CallExpression {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
-        todo!();
+        let cfg = cfg.indent();
+        fmt_child(f, cfg, &self.callee)?;
+
+        writeln!(f, "")?;
+        cfg.fmt_padding(f)?;
+
+        write!(f, "[Arguments]:")?;
+        let cfg = cfg.indent();
+
+        for arg in &self.arguments {
+            let _ = fmt_child(f, cfg, arg);
+        }
+
+        Ok(())
     }
 
     fn node_name(&self) -> &'static str {
@@ -552,7 +572,7 @@ impl AstFormatConfig {
         for _ in 0..self.indent {
             write!(f, "|   ")?
         }
-        
+
         Ok(())
     }
 }

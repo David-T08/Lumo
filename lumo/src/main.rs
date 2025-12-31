@@ -55,6 +55,13 @@ fn main() {
     info!("  Type exit to stop execution");
 
     loop {
+        info!("");
+        info!("  /\\_____________");
+        info!(" / .             ");
+        info!("<  u         ");
+        info!("|            ");
+        info!("\\/------------\\/");
+
         print!("> ");
         io::stdout().flush().unwrap();
 
@@ -72,12 +79,6 @@ fn main() {
         let command: Vec<u8> = command.as_bytes().into();
 
         let lexer = Lexer::new("cli", &command);
-
-        info!("== Lexing ==");
-        for tok in Lexer::new("cli", &command) {
-            info!("{tok}\n");
-        }
-
         info!("== Parsing ==");
 
         let mut parser = Parser::new(lexer);

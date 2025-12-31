@@ -1,6 +1,6 @@
 use crate::{ast::AstFormat, auto_display_enum};
 
-use lumo_macros::{AstFormatExt};
+use lumo_macros::AstFormatExt;
 
 use ordered_float::OrderedFloat;
 use std::{
@@ -16,23 +16,25 @@ pub fn interner() -> &'static RwLock<StringInterner<DefaultBackend>> {
 
 pub type Sym = DefaultSymbol;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Precedence {
-    Lowest,
-    LogicalOr,
-    LogicalAnd,
-    Equality,
-    Comparison,
-    BitOr,
-    BitXor,
-    BitAnd,
-    Shift,
-    Sum,
-    Product,
-    Prefix,
-    Postfix,
-    Call,
-    Index,
+auto_display_enum! {
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    pub enum Precedence {
+        Lowest => "Lowest",
+        LogicalOr => "LogicalOr",
+        LogicalAnd => "LogicalAnd",
+        Equality => "Equality",
+        Comparison => "Comparison",
+        BitOr => "BitOr",
+        BitXor => "BitXor",
+        BitAnd => "BitAnd",
+        Shift => "Shift",
+        Sum => "Sum",
+        Product => "Product",
+        Prefix => "Prefix",
+        Postfix => "Postfix",
+        Call => "Call",
+        Index => "Index",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
