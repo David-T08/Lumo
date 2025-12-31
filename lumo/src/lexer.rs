@@ -145,32 +145,35 @@ impl<'a> Lexer<'a> {
 
             return Some(Token::new(self.file, span, TokenKind::Operator { kind }));
         } else if matches!(current_char, b'A'..=b'Z' | b'a'..=b'z' | b'_') {
-            trace!("encountered alphabetical character (ident/keyword)");
-            // Identifiers and keywords
-            while self.read_position < self.stream.len()
-                && matches!(self.stream[self.position], b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'0'..=b'9')
+            trace!(
+                "encountered alphabetical character (ident/keyword): {}",
+                current_char as char
+            );
+
+            let mut end = self.position + 1;
+            while end < self.stream.len()
+                && matches!(
+                    self.stream[end],
+                    b'A'..=b'Z' | b'a'..=b'z' | b'_' | b'0'..=b'9'
+                )
             {
-                self.next_char();
+                end += 1;
             }
 
-            if self.read_position >= self.stream.len() {
-                self.position += 1;
-                self.read_position += 1;
-            }
-
-            let read = match std::str::from_utf8(&self.stream[start_pos..self.position]) {
-                Ok(val) => val,
-                Err(_) => {
-                    panic!(
-                        "Failed to lex at {}:{}, Malformed UTF-8",
-                        start_col, start_col
-                    );
-                }
-            };
-
+            let read = std::str::from_utf8(&self.stream[start_pos..end]).unwrap_or_else(|_| {
+                panic!(
+                    "Failed to lex at {}:{}, Malformed UTF-8",
+                    start_line, start_col
+                )
+            });
             trace!("read => {read}");
 
-            span.end = self.position;
+            let len = end - start_pos;
+            self.position = end;
+            self.read_position = end + 1;
+            self.columnno += len as u32;
+            
+            span.end = end;
 
             if let Some(kind) = self.match_keyword(read) {
                 trace!("matched a keyword `{kind}");
