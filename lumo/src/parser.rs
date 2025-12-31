@@ -161,11 +161,7 @@ where
     }
 
     fn peek_precedence(&self) -> Option<Precedence> {
-        if let TokenKind::Operator { kind } = self.peek.as_ref()?.kind() {
-            Some(kind.precedence())
-        } else {
-            None
-        }
+        self.peek.as_ref()?.precedence()
     }
 
     fn peek_is_identifier(&self) -> bool {
@@ -390,15 +386,15 @@ where
             TokenKind::Symbol { kind } => match *kind {
                 SymbolKind::BraceOpen => todo!(),
                 SymbolKind::BracketOpen => todo!(),
-                SymbolKind::ParenOpen => todo!(),
+                SymbolKind::ParenOpen => self.parse_grouped_expression(),
 
                 _ => None,
             },
             TokenKind::Operator { kind } => match *kind {
-                OperatorKind::Bang 
-                    | OperatorKind::Subtract 
-                    | OperatorKind::Decrement 
-                    | OperatorKind::Increment => self.parse_prefix_op(*kind, tok.span().clone()),
+                OperatorKind::Bang
+                | OperatorKind::Subtract
+                | OperatorKind::Decrement
+                | OperatorKind::Increment => self.parse_prefix_op(*kind, tok.span().clone()),
 
                 _ => None,
             },
@@ -407,37 +403,33 @@ where
     }
 
     #[instrument(skip(self, left))]
-    fn parse_infix(&mut self, left: Spanned<Expression>) -> Spanned<Expression> {
+    fn parse_infix(&mut self, left: Spanned<Expression>) -> Option<Spanned<Expression>> {
         debug!("operator = {}", self.current.as_ref().unwrap().name());
 
         let op = self.current.as_ref().unwrap();
-
         if *op == SymbolKind::ParenOpen {
-            return self.parse_call_expression();
+            return self.parse_call_expression(left);
         } else if *op == SymbolKind::BracketOpen {
-            return self.parse_index_expression().unwrap();
+            return self.parse_index_expression();
         }
 
         let (prec, op_kind, op_span) = match self.current.as_ref().unwrap().kind() {
             TokenKind::Operator { kind } => (kind.precedence(), kind.clone(), op.span().clone()),
-            _ => return left,
+            _ => return Some(left),
         };
-
         self.advance();
-        let Some(right) = self.parse_expression(prec) else {
-            return left;
-        };
 
+        let right = self.parse_expression(prec)?;
         let end_span = left.span().join(right.span());
 
-        Spanned::new(
+        Some(Spanned::new(
             Expression::Binary(ast::BinaryExpression {
                 left: Box::new(left),
                 op: Spanned::new(op_kind, op_span),
                 right: Box::new(right),
             }),
             end_span,
-        )
+        ))
     }
 
     #[instrument(skip(self))]
@@ -459,24 +451,37 @@ where
                 break;
             }
 
+            let current = self.current.as_ref()?;
+            info!(
+                "current: ({}, {}) | peek: ({}, {})",
+                current.name(),
+                precedence,
+                peek.name(),
+                peek.precedence().unwrap_or(Precedence::Lowest)
+            );
+            info!(
+                "peek_precedence reports: {}",
+                self.peek_precedence().unwrap_or(Precedence::Lowest)
+            );
+
             if precedence >= self.peek_precedence().unwrap_or(Precedence::Lowest) {
                 break;
             }
 
             self.advance();
-            left = self.parse_infix(left)
+            left = self.parse_infix(left)?
         }
         debug!("Finished parsing expression => {:#?}", &left);
 
         Some(left)
     }
-    
+
     fn parse_prefix_op(&mut self, op: OperatorKind, op_span: Span) -> Option<Spanned<Expression>> {
         self.advance();
-        
+
         let right = self.parse_expression(Precedence::Prefix)?;
         let end_span = op_span.join(&right.span);
-    
+
         Some(Spanned::new(
             Expression::Prefix(ast::PrefixExpression {
                 op: Spanned::new(op, op_span),
@@ -486,14 +491,69 @@ where
         ))
     }
 
-    #[instrument(skip(self))]
-    fn parse_call_expression(&mut self) -> Spanned<Expression> {
-        todo!();
+    #[instrument(skip(self, callee))]
+    fn parse_call_expression(
+        &mut self,
+        callee: Spanned<Expression>,
+    ) -> Option<Spanned<Expression>> {
+        let start_span = callee.span().clone();
+        let arguments = self.parse_expression_list(SymbolKind::ParenClose)?;
+
+        let end_span = start_span.join(
+            self.current
+                .as_ref()
+                .map(|t| t.span())
+                .unwrap_or(&start_span),
+        );
+
+        Some(Spanned::new(
+            Expression::Call(ast::CallExpression {
+                callee: Box::new(callee),
+                arguments,
+            }),
+            end_span,
+        ))
     }
 
     #[instrument(skip(self))]
     fn parse_index_expression(&mut self) -> Option<Spanned<Expression>> {
         todo!();
+    }
+
+    #[instrument(skip(self))]
+    fn parse_grouped_expression(&mut self) -> Option<Spanned<Expression>> {
+        self.advance();
+
+        let expr = self.parse_expression(Precedence::Lowest);
+        self.expect_peek(SymbolKind::ParenClose)?;
+
+        expr
+    }
+
+    #[instrument(skip(self))]
+    fn parse_expression_list(
+        &mut self,
+        end_symbol: SymbolKind,
+    ) -> Option<Vec<Spanned<Expression>>> {
+        let mut args: Vec<Spanned<Expression>> = Vec::new();
+        if self.peek_is(end_symbol) {
+            self.advance();
+
+            return Some(args);
+        };
+
+        self.advance();
+        args.push(self.parse_expression(Precedence::Lowest)?);
+
+        while self.peek_is(SymbolKind::Comma) {
+            self.advance(); // go to comma
+            self.advance(); // go to start of expr
+
+            args.push(self.parse_expression(Precedence::Lowest)?);
+        }
+
+        self.expect_peek(end_symbol)?;
+        Some(args)
     }
 
     #[instrument(skip(self))]
@@ -557,7 +617,7 @@ where
     pub fn parse_program(&mut self) -> ast::Program {
         let mut statements = Vec::new();
 
-        while self.peek.is_some() {
+        while let Some(peek) = &self.peek {
             let tok = self.current.as_ref().unwrap();
             trace!("Encountered token: {} {}", tok.name(), tok.path());
 
@@ -566,9 +626,8 @@ where
             } else if *tok == KeywordKind::Return {
                 self.parse_return_statement()
             } else {
-                info!("{}", self.peek.as_ref().unwrap().name());
-                if let Some(peek) = self.peek.as_ref()
-                    && let Some(op) = peek.as_operator()
+                info!("peek is: {}", peek.name());
+                if let Some(op) = peek.as_operator()
                     && op.is_assignment()
                 {
                     self.parse_assignment_statement()
