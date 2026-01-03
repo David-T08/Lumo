@@ -25,6 +25,13 @@ impl<T: AstFormat> Spanned<T> {
     pub fn span(&self) -> &Span {
         &self.span
     }
+
+    pub fn map<U: AstFormat>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
+        Spanned {
+            value: f(self.value),
+            span: self.span,
+        }
+    }
 }
 
 impl<T: AstFormat> Deref for Spanned<T> {
@@ -91,12 +98,11 @@ impl AstFormat for PlaceExpression {
 
 #[derive(Debug, AstFormatExt)]
 pub enum Statement {
-    Block(BlockStatement),
     Declaration(DeclarationStatement),
     Assignment(AssignmentStatement),
     While(WhileStatement),
     Expression(ExpressionStatement),
-    // Import,
+    Function(FunctionStatement),
     Break,
     Continue,
     Return(ReturnStatement),
@@ -111,11 +117,11 @@ impl AstFormat for Statement {
 
         match self {
             Statement::Assignment(stmt) => stmt.fmt_with(f, cfg),
-            Statement::Block(block) => block.fmt_with(f, cfg),
             Statement::Declaration(decl) => decl.fmt_with(f, cfg),
             Statement::Return(ret) => ret.fmt_with(f, cfg),
             Statement::While(stmt) => stmt.fmt_with(f, cfg),
             Statement::Expression(expr) => expr.fmt_with(f, cfg),
+            Statement::Function(s) => s.fmt_with(f, cfg),
 
             _ => Ok(()),
         }
@@ -124,29 +130,14 @@ impl AstFormat for Statement {
     fn node_name(&self) -> &'static str {
         match self {
             Statement::Assignment(s) => s.node_name(),
-            Statement::Block(s) => s.node_name(),
             Statement::Break => "Break",
             Statement::Continue => "Continue",
             Statement::Declaration(s) => s.node_name(),
             Statement::Return(s) => s.node_name(),
             Statement::While(s) => s.node_name(),
             Statement::Expression(s) => s.node_name(),
+            Statement::Function(s) => s.node_name(),
         }
-    }
-}
-
-#[derive(Debug, AstFormatExt)]
-pub struct BlockStatement {
-    pub statements: Vec<Stmt>,
-}
-
-impl AstFormat for BlockStatement {
-    fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
-        todo!();
-    }
-
-    fn node_name(&self) -> &'static str {
-        "Block"
     }
 }
 
@@ -160,13 +151,14 @@ pub struct DeclarationStatement {
 
 impl AstFormat for DeclarationStatement {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
-        self.name.fmt_with(f, cfg)?;
-
+        write!(f, "[Constant]: {}", self.constant)?;
         writeln!(f, "")?;
         cfg.fmt_padding(f)?;
+        
+        self.name.fmt_with(f, cfg)?;
         self.value
             .as_ref()
-            .map(|v| v.fmt_with(f, cfg))
+            .map(|v| fmt_child(f, cfg, v))
             .unwrap_or_else(|| write!(f, "None"))
     }
 
@@ -195,7 +187,7 @@ impl AstFormat for AssignmentStatement {
 #[derive(Debug, AstFormatExt)]
 pub struct WhileStatement {
     pub condition: Expr,
-    pub body: Spanned<BlockStatement>,
+    pub body: Spanned<BlockExpression>,
 }
 
 impl AstFormat for WhileStatement {
@@ -242,6 +234,34 @@ impl AstFormat for ReturnStatement {
 }
 
 #[derive(Debug, AstFormatExt)]
+pub struct FunctionStatement {
+    pub name: Ident,
+    pub parameters: Vec<Ident>,
+    pub body: Spanned<BlockExpression>,
+}
+
+impl AstFormat for FunctionStatement {
+    fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
+        self.name.fmt_with(f, cfg)?;
+
+        writeln!(f, "")?;
+        cfg.fmt_padding(f)?;
+        
+        write!(f, "[Parameters]:")?;
+        self.parameters.iter().for_each(|p| {
+            let cfg = cfg.indent();
+            fmt_child(f, cfg, p);
+        });
+
+        fmt_child(f, cfg, &self.body)
+    }
+
+    fn node_name(&self) -> &'static str {
+        "Function"
+    }
+}
+
+#[derive(Debug, AstFormatExt)]
 pub enum Expression {
     Identifier(Identifier),
 
@@ -249,7 +269,6 @@ pub enum Expression {
     StringLiteral(Literal<SymbolU32>),
     IntegerLiteral(Literal<i64>),
     FloatLiteral(Literal<f64>),
-    FunctionLiteral(FunctionLiteral),
     ArrayLiteral(ArrayLiteral),
 
     Prefix(PrefixExpression),
@@ -257,6 +276,7 @@ pub enum Expression {
 
     Binary(BinaryExpression),
 
+    Block(BlockExpression),
     Call(CallExpression),
     // Match,
     If,
@@ -275,6 +295,8 @@ impl AstFormat for Expression {
             Expression::BooleanLiteral(e) => e.fmt_with(f, cfg),
             Expression::StringLiteral(e) => e.fmt_with(f, cfg),
             Expression::FloatLiteral(e) => e.fmt_with(f, cfg),
+
+            Expression::Block(e) => e.fmt_with(f, cfg),
 
             Expression::Call(e) => e.fmt_with(f, cfg),
 
@@ -295,6 +317,8 @@ impl AstFormat for Expression {
             Expression::StringLiteral(e) => e.node_name(),
             Expression::FloatLiteral(e) => e.node_name(),
             Expression::ArrayLiteral(e) => e.node_name(),
+
+            Expression::Block(e) => e.node_name(),
 
             _ => "<unknown expr>",
         }
@@ -359,27 +383,6 @@ impl<T: std::fmt::Debug + LiteralKind> AstFormat for Literal<T> {
 impl From<bool> for Literal<bool> {
     fn from(value: bool) -> Self {
         Literal { value }
-    }
-}
-
-#[derive(Debug, AstFormatExt)]
-pub struct FunctionLiteral {
-    pub parameters: Vec<Ident>,
-    pub body: Spanned<BlockStatement>,
-}
-
-impl AstFormat for FunctionLiteral {
-    fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
-        write!(f, "Parameters:")?;
-        self.parameters.iter().for_each(|p| {
-            fmt_child(f, cfg, p);
-        });
-
-        fmt_child(f, cfg, &self.body)
-    }
-
-    fn node_name(&self) -> &'static str {
-        "Function"
     }
 }
 
@@ -499,11 +502,49 @@ impl AstFormat for CallExpression {
 }
 
 #[derive(Debug, AstFormatExt)]
+pub struct BlockExpression {
+    pub statements: Vec<Stmt>,
+    pub tail: Option<Box<Expr>>,
+}
+
+impl AstFormat for BlockExpression {
+    fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
+        let cfg = cfg.indent();
+        writeln!(f, "")?;
+        cfg.fmt_padding(f)?;
+
+        writeln!(f, "[Tail]:")?;
+        cfg.indent().fmt_padding(f)?;
+
+        self.tail
+            .as_ref()
+            .map(|v| v.fmt_with(f, cfg.indent()))
+            .unwrap_or_else(|| write!(f, "None"))?;
+
+        writeln!(f, "")?;
+        cfg.fmt_padding(f)?;
+
+        write!(f, "[Statements]:")?;
+        let cfg = cfg.indent();
+
+        for stmt in &self.statements {
+            let _ = fmt_child(f, cfg, stmt);
+        }
+
+        Ok(())
+    }
+
+    fn node_name(&self) -> &'static str {
+        "Block"
+    }
+}
+
+#[derive(Debug, AstFormatExt)]
 pub struct IfExpression {
     pub condition: Box<Expr>,
-    pub consequence: BlockStatement,
+    pub consequence: BlockExpression,
     // TODO: Represent if-else chain later
-    pub alternate: Option<BlockStatement>,
+    pub alternate: Option<BlockExpression>,
 }
 
 impl AstFormat for IfExpression {

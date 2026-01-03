@@ -83,10 +83,10 @@ impl Span {
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Token {
-    file: Sym,
-    span: Span,
+    pub file: Sym,
+    pub span: Span,
 
-    kind: TokenKind,
+    pub kind: TokenKind,
 }
 
 #[allow(dead_code)]
