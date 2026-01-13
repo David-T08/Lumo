@@ -1,115 +1,23 @@
-use std::fmt::{Display, Formatter};
 use tracing::{debug, error, info, instrument, trace, warn};
 
+pub mod errors;
+use errors::{ExpectedToken, ParserError};
+
 use crate::{
-    ast::{self, Expression, Spanned, Statement},
+    ast::{self, AstFormat, AstFormatConfig, AstFormatExt, Expression, Spanned, Statement},
     tokens::{
         KeywordKind, LiteralKind, OperatorKind, Precedence, Span, SymbolKind, Token, TokenKind,
-        interner,
     },
 };
 
-#[derive(Debug, Clone)]
-pub enum ParserError {
-    IncorrectToken {
-        encountered: Option<Token>,
-        expected: ExpectedToken,
-    },
-    InvalidPrefixFn {
-        encountered: Token,
-    },
-}
-
-impl Display for ParserError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParserError::IncorrectToken {
-                encountered,
-                expected,
-            } => {
-                writeln!(
-                    f,
-                    "error: expected {}, got {} `{}`",
-                    expected,
-                    "a",
-                    encountered
-                        .as_ref()
-                        .map(|t| t.name())
-                        .unwrap_or("<none>".into())
-                )?;
-
-                write!(f, "hi")
-            }
-
-            ParserError::InvalidPrefixFn { encountered } => {
-                writeln!(f, "Invalid Prefix function for {}", encountered.name())
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ExpectedToken {
-    Keyword(KeywordKind),
-    Symbol(SymbolKind),
-    Operator(OperatorKind),
-
-    LiteralExact(LiteralKind),
-    LiteralAny,
-    LiteralString,
-    LiteralInt,
-    LiteralFloat,
-
-    Identifier,
-    IdentifierNamed(crate::tokens::Sym),
-}
-
-impl Display for ExpectedToken {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ExpectedToken::Keyword(k) => write!(f, "keyword `{}`", k),
-            ExpectedToken::Symbol(s) => write!(f, "symbol `{}`", s),
-            ExpectedToken::Operator(o) => write!(f, "operator `{}`", o),
-
-            ExpectedToken::LiteralExact(l) => write!(f, "literal `{}`", l),
-
-            ExpectedToken::LiteralAny => write!(f, "a literal"),
-            ExpectedToken::LiteralInt => write!(f, "an integer literal"),
-            ExpectedToken::LiteralFloat => write!(f, "a float literal"),
-            ExpectedToken::LiteralString => write!(f, "a string literal"),
-
-            ExpectedToken::Identifier => write!(f, "an identifier"),
-            ExpectedToken::IdentifierNamed(sym) => {
-                let guard = interner().read().unwrap();
-                let name = guard.resolve(*sym).unwrap_or("<unknown>");
-                write!(f, "identifier `{}`", name)
-            }
-        }
-    }
-}
-
-impl From<KeywordKind> for ExpectedToken {
-    fn from(k: KeywordKind) -> Self {
-        ExpectedToken::Keyword(k)
-    }
-}
-
-impl From<SymbolKind> for ExpectedToken {
-    fn from(s: SymbolKind) -> Self {
-        ExpectedToken::Symbol(s)
-    }
-}
-
-impl From<OperatorKind> for ExpectedToken {
-    fn from(o: OperatorKind) -> Self {
-        ExpectedToken::Operator(o)
-    }
-}
-
-impl From<LiteralKind> for ExpectedToken {
-    fn from(o: LiteralKind) -> Self {
-        ExpectedToken::LiteralExact(o)
-    }
+macro_rules! debug_state {
+    ($s:expr) => {
+        tracing::info!(
+            "current: {}, peek: {}",
+            $s.current.as_ref().unwrap().name(),
+            $s.peek.as_ref().map(|p| p.name()).unwrap_or("NONE".into())
+        );
+    };
 }
 
 pub struct Parser<I>
@@ -128,6 +36,34 @@ impl<I> Parser<I>
 where
     I: Iterator<Item = Token>,
 {
+    fn current_is<K>(&self, kind: K) -> bool
+    where
+        Token: PartialEq<K>,
+        K: Copy + Clone,
+    {
+        self.current.as_ref().is_some_and(|tok| *tok == kind)
+    }
+
+    fn push_unexpected_err<K>(&mut self, expected: K)
+    where
+        K: Clone + Into<ExpectedToken>,
+    {
+        let err = if let Some(p) = &self.peek {
+            ParserError::UnexpectedToken {
+                encountered: p.clone(),
+                expected: expected.into(),
+            }
+        } else {
+            ParserError::UnexpectedEof {
+                expected: expected.into(),
+                span: self.current_span().unwrap(),
+                file: self.current.as_ref().unwrap().file,
+            }
+        };
+
+        self.errors.push(err);
+    }
+
     // Generic
     fn peek_is<K>(&self, kind: K) -> bool
     where
@@ -152,10 +88,7 @@ where
             self.advance();
             self.current.clone()
         } else {
-            self.errors.push(ParserError::IncorrectToken {
-                encountered: self.peek.clone(),
-                expected: kind.into(),
-            });
+            self.push_unexpected_err(kind);
             None
         }
     }
@@ -191,10 +124,7 @@ where
             self.advance();
             self.current.clone()
         } else {
-            self.errors.push(ParserError::IncorrectToken {
-                encountered: self.peek.clone(),
-                expected: ExpectedToken::Identifier,
-            });
+            self.push_unexpected_err(ExpectedToken::Identifier);
             None
         }
     }
@@ -210,10 +140,7 @@ where
             self.advance();
             self.current.clone()
         } else {
-            self.errors.push(ParserError::IncorrectToken {
-                encountered: self.peek.clone(),
-                expected: ExpectedToken::LiteralAny,
-            });
+            self.push_unexpected_err(ExpectedToken::LiteralAny);
             None
         }
     }
@@ -223,10 +150,7 @@ where
             self.advance();
             self.current.clone()
         } else {
-            self.errors.push(ParserError::IncorrectToken {
-                encountered: self.peek.clone(),
-                expected: ExpectedToken::LiteralInt,
-            });
+            self.push_unexpected_err(ExpectedToken::LiteralInt);
             None
         }
     }
@@ -236,10 +160,7 @@ where
             self.advance();
             self.current.clone()
         } else {
-            self.errors.push(ParserError::IncorrectToken {
-                encountered: self.peek.clone(),
-                expected: ExpectedToken::LiteralFloat,
-            });
+            self.push_unexpected_err(ExpectedToken::LiteralFloat);
             None
         }
     }
@@ -249,10 +170,7 @@ where
             self.advance();
             self.current.clone()
         } else {
-            self.errors.push(ParserError::IncorrectToken {
-                encountered: self.peek.clone(),
-                expected: ExpectedToken::LiteralString,
-            });
+            self.push_unexpected_err(ExpectedToken::LiteralString);
             None
         }
     }
@@ -296,20 +214,13 @@ where
         if is_constant {
             self.advance();
         }
-
-        debug!("is_constant = {is_constant}");
-
         let ident = self.expect_peek_identifier()?;
-        debug!("ident = {:#?}", &ident);
-
         self.expect_peek(OperatorKind::Assign)?;
         self.advance();
 
         let expr = self.parse_expression(Precedence::Lowest)?;
         let end_span = start_span.join(&expr.span());
         self.consume_until_statement_end();
-        
-        debug!("expr = {:#?}", &expr);
 
         Some(Spanned::new(
             ast::DeclarationStatement {
@@ -393,6 +304,7 @@ where
         ))
     }
 
+    #[rustfmt::skip]
     #[instrument(skip(self))]
     fn parse_statement(&mut self) -> Option<Spanned<Statement>> {
         let tok = self.current.as_ref().unwrap();
@@ -402,23 +314,23 @@ where
                 kind: KeywordKind::Let,
             } => self
                 .parse_let_statement()
-                .map(|s| s.map(Statement::Declaration)),
+                    .map(|s| s.map(Statement::Declaration)),
             TokenKind::Keyword {
                 kind: KeywordKind::Return,
             } => self
                 .parse_return_statement()
-                .map(|s| s.map(Statement::Return)),
+                    .map(|s| s.map(Statement::Return)),
             TokenKind::Keyword {
                 kind: KeywordKind::Function,
             } => self
                 .parse_function_statement()
-                .map(|s| s.map(Statement::Function)),
+                    .map(|s| s.map(Statement::Function)),
             _ if self.peek_is_assignment() => self
                 .parse_assignment_statement()
-                .map(|s| s.map(Statement::Assignment)),
+                    .map(|s| s.map(Statement::Assignment)),
             _ => self
                 .parse_expression_statement()
-                .map(|s| s.map(Statement::Expression)),
+                    .map(|s| s.map(Statement::Expression)),
         }
     }
 
@@ -436,7 +348,7 @@ where
                     tok.span().clone(),
                 )),
 
-                KeywordKind::If => todo!(),
+                KeywordKind::If => self.parse_if_expression().map(|e| e.map(Expression::If)),
 
                 _ => None,
             },
@@ -551,6 +463,51 @@ where
     }
 
     #[instrument(skip(self))]
+    fn parse_if_expression(&mut self) -> Option<Spanned<ast::IfExpression>> {
+        let start_span = self.current_span().unwrap();
+        self.expect_peek(SymbolKind::ParenOpen)?;
+
+        let condition = self.parse_expression(Precedence::Lowest)?;
+        self.expect_peek(SymbolKind::BraceOpen)?;
+        debug!("{}", condition.with_cfg(AstFormatConfig::default()));
+
+        let consequence = self.parse_block_expression()?;
+        debug!("{}", consequence.with_cfg(AstFormatConfig::default()));
+        debug_state!(self);
+
+        let alternate = if self.current_is(KeywordKind::Else) {
+            self.advance();
+            let encountered = self.current.as_ref().unwrap().clone();
+            
+            if let Some(expr) = self.parse_expression(Precedence::Lowest) {
+                match expr.value {
+                    Expression::If(e) => Some(ast::ElseBranch::If(Box::new(Spanned::new(e, expr.span)))),
+                    Expression::Block(e) => Some(ast::ElseBranch::Block(Spanned::new(e, expr.span))),
+                    _ => {
+                        self.errors.push(ParserError::InvalidElseBranch { encountered: encountered });
+                        None
+                    },
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let end_span = start_span.join(&self.current_span().unwrap());
+
+        Some(Spanned::new(
+            ast::IfExpression {
+                condition: Box::new(condition),
+                consequence,
+                alternate,
+            },
+            end_span,
+        ))
+    }
+
+    #[instrument(skip(self))]
     fn parse_block_expression(&mut self) -> Option<Spanned<ast::BlockExpression>> {
         let start_span = self.current_span()?;
         self.advance();
@@ -570,14 +527,7 @@ where
             let expr = self.parse_expression(Precedence::Lowest)?;
             self.advance();
 
-            info!(
-                "current: {}, peek: {}",
-                self.current.as_ref().unwrap().name(),
-                self.peek
-                    .as_ref()
-                    .map(|p| p.name())
-                    .unwrap_or("NONE".into())
-            );
+            debug_state!(self);
 
             if let Some(s) = self.current.as_ref().unwrap().as_symbol() {
                 match s {
@@ -604,11 +554,13 @@ where
             }
         }
 
-        let end_span = self.current_span()?;
-        let span = start_span.join(&end_span);
         self.advance();
+        let span = start_span.join(&self.current_span()?);
 
-        Some(Spanned::new(ast::BlockExpression { statements, tail }, span))
+        Some(Spanned::new(
+            ast::BlockExpression { statements, tail },
+            span,
+        ))
     }
 
     fn parse_prefix_op(
@@ -661,12 +613,20 @@ where
 
     #[instrument(skip(self))]
     fn parse_grouped_expression(&mut self) -> Option<Spanned<Expression>> {
+        let start_span = self.current_span().unwrap();
         self.advance();
+
+        if self.current_is(SymbolKind::ParenClose) {
+            return Some(Spanned::new(
+                Expression::Unit,
+                start_span.join(&self.current_span().unwrap()),
+            ));
+        }
 
         let expr = self.parse_expression(Precedence::Lowest);
         self.expect_peek(SymbolKind::ParenClose)?;
 
-        expr
+        expr.map(|e| Spanned::new(e.value, start_span.join(&self.current_span().unwrap())))
     }
 
     #[instrument(skip(self))]

@@ -1,5 +1,5 @@
 use crate::{
-    parser::ParserError,
+    parser::errors::ParserError,
     tokens::{OperatorKind, Span, interner},
 };
 
@@ -154,7 +154,7 @@ impl AstFormat for DeclarationStatement {
         write!(f, "[Constant]: {}", self.constant)?;
         writeln!(f, "")?;
         cfg.fmt_padding(f)?;
-        
+
         self.name.fmt_with(f, cfg)?;
         self.value
             .as_ref()
@@ -246,7 +246,7 @@ impl AstFormat for FunctionStatement {
 
         writeln!(f, "")?;
         cfg.fmt_padding(f)?;
-        
+
         write!(f, "[Parameters]:")?;
         self.parameters.iter().for_each(|p| {
             let cfg = cfg.indent();
@@ -279,7 +279,9 @@ pub enum Expression {
     Block(BlockExpression),
     Call(CallExpression),
     // Match,
-    If,
+    If(IfExpression),
+
+    Unit,
 }
 
 impl AstFormat for Expression {
@@ -299,6 +301,9 @@ impl AstFormat for Expression {
             Expression::Block(e) => e.fmt_with(f, cfg),
 
             Expression::Call(e) => e.fmt_with(f, cfg),
+            Expression::Unit => write!(f, ""),
+
+            Expression::If(e) => e.fmt_with(f, cfg),
 
             _ => todo!(),
         }
@@ -319,6 +324,8 @@ impl AstFormat for Expression {
             Expression::ArrayLiteral(e) => e.node_name(),
 
             Expression::Block(e) => e.node_name(),
+            Expression::If(e) => e.node_name(),
+            Expression::Unit => "Unit",
 
             _ => "<unknown expr>",
         }
@@ -539,17 +546,46 @@ impl AstFormat for BlockExpression {
     }
 }
 
+#[derive(Debug)]
+pub enum ElseBranch {
+    Block(Spanned<BlockExpression>),
+    If(Box<Spanned<IfExpression>>),
+}
+
 #[derive(Debug, AstFormatExt)]
 pub struct IfExpression {
     pub condition: Box<Expr>,
-    pub consequence: BlockExpression,
-    // TODO: Represent if-else chain later
-    pub alternate: Option<BlockExpression>,
+    pub consequence: Spanned<BlockExpression>,
+    pub alternate: Option<ElseBranch>,
 }
 
 impl AstFormat for IfExpression {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, cfg: AstFormatConfig) -> std::fmt::Result {
-        todo!();
+        let cfg = cfg.indent();
+        writeln!(f, "")?;
+        cfg.fmt_padding(f)?;
+
+        write!(f, "[Condition]:")?;
+        fmt_child(f, cfg.indent(), &self.condition)?;
+
+        writeln!(f, "")?;
+        cfg.fmt_padding(f)?;
+
+        write!(f, "[Consequence]:")?;
+        fmt_child(f, cfg.indent(), &self.consequence)?;
+
+        writeln!(f, "")?;
+        cfg.fmt_padding(f)?;
+
+        writeln!(f, "[Alternate]:")?;
+        cfg.indent().fmt_padding(f)?;
+        self.alternate
+            .as_ref()
+            .map(|v| match v {
+                ElseBranch::Block(e) => e.fmt_with(f, cfg.indent()),
+                ElseBranch::If(e) => e.fmt_with(f, cfg.indent()),
+            })
+            .unwrap_or_else(|| write!(f, "None"))
     }
 
     fn node_name(&self) -> &'static str {
